@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"docket/internal/agent"
+	"docket/internal/appsvc"
 	"docket/internal/ipc"
 	"docket/internal/store"
 )
@@ -100,7 +101,7 @@ func (v *ticketsView) keys(ws *workspace, k tea.KeyMsg) tea.Cmd {
 	}
 	switch key {
 	case "a":
-		return ws.dbDo(fmt.Sprintf("#%d approved", id), func() error { return approveTicket(ws.db, t) })
+		return ws.dbDo(fmt.Sprintf("#%d approved", id), func() error { return appsvc.ApproveTicket(ws.db, t) })
 	case "e":
 		return edit("requirements", "requirements", t.Requirements)
 	case "C":
@@ -131,25 +132,6 @@ func (v *ticketsView) keys(ws *workspace, k tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
-}
-
-// approveTicket: backlog → pending; on a flagged ticket clear the flag so the
-// daemon resumes (review loop gets a fresh round budget).
-func approveTicket(db *store.DB, t store.Ticket) error {
-	if t.Status == store.TBacklog {
-		return db.UpdateTicketFields(t.ID, map[string]any{"status": store.TPending, "needs_user": 0})
-	}
-	if !t.NeedsUser {
-		return nil
-	}
-	fields := map[string]any{"needs_user": 0}
-	if t.ReviewState == store.RError {
-		fields["review_state"] = ""
-	}
-	if t.ReviewState == store.RRequestChanges {
-		fields["review_rounds"] = 0
-	}
-	return db.UpdateTicketFields(t.ID, fields)
 }
 
 func (v *ticketsView) render(ws *workspace, w, h int) string {

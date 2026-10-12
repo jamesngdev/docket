@@ -6,8 +6,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"docket/internal/agent"
+	"docket/internal/appsvc"
 	"docket/internal/ipc"
-	"docket/internal/store"
 )
 
 // View indexes in workspace.views.
@@ -20,90 +20,24 @@ const (
 	vDocs
 )
 
-// counts summarises the snapshot for the pipeline stepper and next action.
-type counts struct {
-	scanned                              bool
-	docs, openQ, answeredQ               int
-	drafts, approved, approvedNoTickets  int
-	backlog, active, done, total, needUs int
-	techleadTask                         string // running TechLead task, "" if idle
-}
+// counts is the shared pipeline summary.
+type counts = appsvc.Counts
 
 func count(s *snapshot) counts {
-	c := counts{scanned: s.project.DocsCommit != "", docs: len(s.docs)}
-	for _, q := range s.questions {
-		if q.Status == store.QOpen {
-			c.openQ++
-		} else {
-			c.answeredQ++
-		}
-	}
-	hasTickets := map[int64]bool{}
-	for _, t := range s.tickets {
-		if t.Status == store.TOutdated {
-			continue
-		}
-		hasTickets[t.FeatureID] = true
-		c.total++
-		switch t.Status {
-		case store.TBacklog:
-			c.backlog++
-		case store.TProcessing, store.TWaitReview:
-			c.active++
-		case store.TDone:
-			c.done++
-		}
-		if t.NeedsUser {
-			c.needUs++
-		}
-	}
-	for _, f := range s.features {
-		switch f.Status {
-		case store.FDraft:
-			c.drafts++
-		case store.FApproved:
-			c.approved++
-			if !hasTickets[f.ID] {
-				c.approvedNoTickets++
-			}
-		}
-	}
-	for _, r := range s.runs {
-		if r.Role == agent.RoleTechLead && r.Status == store.RunRunning {
-			c.techleadTask = r.Task
-		}
-	}
-	return c
+	return appsvc.Count(s.project, len(s.docs), s.questions, s.features, s.tickets, s.runs)
 }
 
 // nextStep returns the label and action that unblock the pipeline.
 func nextStep(ws *workspace) (string, func() tea.Cmd) {
-	c := count(&ws.snap)
-	goTo := func(v int) func() tea.Cmd {
-		return func() tea.Cmd { ws.active = v; return ws.load() }
+	n := appsvc.NextStep(count(&ws.snap))
+	views := map[string]int{"questions": vQuestions, "features": vFeatures, "tickets": vTickets, "agents": vAgents}
+	switch n.Kind {
+	case appsvc.NextRescan:
+		return n.Label, func() tea.Cmd { return ws.send(ipc.CmdRescan, "", "docs scan started") }
+	case appsvc.NextTechlead:
+		return n.Label, func() tea.Cmd { return ws.send(ipc.CmdTechlead, n.Arg, "TechLead "+n.Arg+" started") }
 	}
-	techlead := func(task string) func() tea.Cmd {
-		return func() tea.Cmd { return ws.send(ipc.CmdTechlead, task, "TechLead "+task+" started") }
-	}
-	switch {
-	case c.techleadTask != "":
-		return "TechLead running (" + c.techleadTask + ")", goTo(vAgents)
-	case !c.scanned:
-		return "scan docs", func() tea.Cmd { return ws.send(ipc.CmdRescan, "", "docs scan started") }
-	case c.openQ > 0:
-		return fmt.Sprintf("answer %d questions", c.openQ), goTo(vQuestions)
-	case c.drafts == 0 && c.approved == 0:
-		return "run TechLead: features", techlead(agent.TaskFeatures)
-	case c.drafts > 0:
-		return fmt.Sprintf("approve %d features", c.drafts), goTo(vFeatures)
-	case c.approvedNoTickets > 0:
-		return "run TechLead: tickets", techlead(agent.TaskTickets)
-	case c.backlog > 0:
-		return fmt.Sprintf("approve %d tickets", c.backlog), goTo(vTickets)
-	case c.needUs > 0:
-		return fmt.Sprintf("%d tickets need you", c.needUs), goTo(vTickets)
-	}
-	return "watch agents", goTo(vAgents)
+	return n.Label, func() tea.Cmd { ws.active = views[n.Arg]; return ws.load() }
 }
 
 // stepper renders ✓ Scan ── ● Questions ── … with a detail line.
@@ -122,17 +56,17 @@ func stepper(c counts) (string, string) {
 		}
 		return sMuted.Render("○")
 	}
-	tl := c.techleadTask
+	tl := c.TechleadTask
 	steps := []st{
-		{"Scan", mark(c.scanned, !c.scanned, false), fmt.Sprintf("%d docs", c.docs)},
-		{"Questions", mark(c.scanned && c.openQ == 0, c.openQ > 0, tl == agent.TaskBootstrap || tl == agent.TaskDocDiff),
-			fmt.Sprintf("%d/%d answered", c.answeredQ, c.answeredQ+c.openQ)},
-		{"Features", mark(c.approved > 0 && c.drafts == 0, c.drafts > 0, tl == agent.TaskFeatures),
-			fmt.Sprintf("%d to approve", c.drafts)},
-		{"Tickets", mark(c.total > 0 && c.backlog == 0, c.backlog > 0, tl == agent.TaskTickets),
-			fmt.Sprintf("%d to approve", c.backlog)},
-		{"Run", mark(c.total > 0 && c.done == c.total, c.needUs > 0, c.active > 0),
-			fmt.Sprintf("%d/%d done", c.done, c.total)},
+		{"Scan", mark(c.Scanned, !c.Scanned, false), fmt.Sprintf("%d docs", c.Docs)},
+		{"Questions", mark(c.Scanned && c.OpenQ == 0, c.OpenQ > 0, tl == agent.TaskBootstrap || tl == agent.TaskDocDiff),
+			fmt.Sprintf("%d/%d answered", c.AnsweredQ, c.AnsweredQ+c.OpenQ)},
+		{"Features", mark(c.Approved > 0 && c.Drafts == 0, c.Drafts > 0, tl == agent.TaskFeatures),
+			fmt.Sprintf("%d to approve", c.Drafts)},
+		{"Tickets", mark(c.Total > 0 && c.Backlog == 0, c.Backlog > 0, tl == agent.TaskTickets),
+			fmt.Sprintf("%d to approve", c.Backlog)},
+		{"Run", mark(c.Total > 0 && c.Done == c.Total, c.NeedsUser > 0, c.Active > 0),
+			fmt.Sprintf("%d/%d done", c.Done, c.Total)},
 	}
 	var top, bottom string
 	for i, s := range steps {

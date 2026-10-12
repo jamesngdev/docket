@@ -28,7 +28,9 @@ func EnsureRunning(p paths.Project) error {
 		return err
 	}
 	if resp, err := ipc.CallResp(p.Socket(), ipc.Request{Cmd: ipc.CmdPing}); err == nil {
-		if resp.Version == ipc.BinaryVersion() {
+		// The TUI binary and the desktop app binary can both talk to the daemon:
+		// only replace it when it runs an OLDER binary than this client.
+		if ipc.VersionTime(resp.Version) >= ipc.VersionTime(ipc.BinaryVersion()) {
 			return nil
 		}
 		_ = Stop(p)

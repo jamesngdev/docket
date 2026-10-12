@@ -55,7 +55,7 @@ func Launch(s Spawn) (string, error) {
 	if err := WriteFiles(filepath.Dir(promptFile), map[string]string{"PROMPT.md": prompt}); err != nil {
 		return "", err
 	}
-	bin, err := os.Executable()
+	binDir, err := ensureCLIShim(s.Paths)
 	if err != nil {
 		return "", err
 	}
@@ -65,7 +65,7 @@ func Launch(s Spawn) (string, error) {
 		"DOCKET_PROJECT":                  s.Paths.Repo,
 		"DOCKET_RUN":                      s.RunID,
 		"DOCKET_DATA":                     s.Paths.Root(),
-		"PATH":                            filepath.Dir(bin) + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH":                            binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 	}
 	if s.Token != "" {
 		env["CLAUDE_CODE_OAUTH_TOKEN"] = s.Token
@@ -82,4 +82,26 @@ func Launch(s Spawn) (string, error) {
 	tmux.Kill(session) // stale session from a crashed run
 	err = tmux.Start(tmux.Spec{Name: session, Dir: s.Workdir, Env: env, Command: cmd, LogFile: s.Paths.RunLog(s.RunID)})
 	return session, err
+}
+
+// ensureCLIShim links <data>/bin/docket to the running executable so agents can
+// call `docket …` whatever the binary is named (e.g. the desktop .app binary).
+func ensureCLIShim(p paths.Project) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	dir := filepath.Join(p.Root(), "bin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	link := filepath.Join(dir, "docket")
+	if cur, err := os.Readlink(link); err == nil && cur == exe {
+		return dir, nil
+	}
+	_ = os.Remove(link)
+	return dir, os.Symlink(exe, link)
 }

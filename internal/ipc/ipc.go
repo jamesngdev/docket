@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -91,6 +93,16 @@ func CallResp(sock string, req Request) (Response, error) {
 		return resp, errors.New(resp.Error)
 	}
 	return resp, nil
+}
+
+// VersionTime extracts the binary mtime (ns) from a BinaryVersion string (0 if unknown).
+func VersionTime(v string) int64 {
+	i := strings.LastIndexByte(v, ':')
+	if i < 0 {
+		return 0
+	}
+	n, _ := strconv.ParseInt(v[i+1:], 10, 64)
+	return n
 }
 
 // BinaryVersion identifies the running executable (path + size + mtime), so a
