@@ -1,0 +1,28 @@
+# Role → skills an agent of that role may load. This file is the ONLY source of
+# truth: nothing from the user's ~/.claude is ever given to spawned agents.
+# A skill is looked up in skills/common/<name> first, then skills/<role>/<name>.
+techlead:
+  - docket-cli
+  - codegraph-usage
+  - generate-compose
+  - scan-docs
+  - generate-questions
+  - generate-features
+  - generate-tickets
+  - ticket-chat # interactive ticket chat (key c in the Tickets view)
+  - create-ticket # interactive "new ticket" chat (key N in the Tickets view)
+developer:
+  - docket-cli
+  - codegraph-usage
+  - implement-ticket
+  - use-shared-db
+  - open-pr
+  - resolve-conflicts
+advisor: # interactive chat that explains one question (key c in the Questions view)
+  - docket-cli
+  - codegraph-usage
+  - explain-question
+tester:
+  - docket-cli
+  - codegraph-usage
+  - review-pr

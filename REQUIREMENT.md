@@ -1,0 +1,338 @@
+# docket — Requirements
+
+A terminal UI (TUI) that turns a project's documentation into features and tickets, then
+orchestrates Claude Code agents to implement those tickets as pull requests.
+
+---
+
+## 1. Decisions (locked)
+
+| Topic             | Decision                                                                                   |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| Language / TUI    | Go + Bubble Tea (lipgloss, bubbles). Vim-style keybindings.                                |
+| Agent runtime     | Each agent is a `claude` CLI process running inside its own **tmux** session.              |
+| Agent visibility  | TUI lists live agents; pressing Enter **attaches** to the agent's tmux session.            |
+| Document source   | A git repo of Markdown files (`*.md`). Changes detected via git diff between scans.        |
+| Project data      | `<repo_path>/.docket/` inside the user's GitHub repo checkout, excluded from git.          |
+| Database          | One SQLite file per project: `<repo_path>/.docket/po.sqlite`.                              |
+| Code reading      | codegraph. The app runs `codegraph init` on the develop checkout and re-indexes after pull.|
+| Git flow          | Worktree branch `ticket/<id>-<slug>` from `origin/develop`; PR targets `develop`.          |
+| Dev database      | One shared docker-compose DB per project. TechLead generates `.docket/docker-compose.yml` on first run; the daemon starts it once and all Developer agents reuse it. |
+| Orchestrator      | A background daemon (`docket daemon`) owns dispatch, `gh` polling and status transitions. The TUI is a client; closing it pauses nothing. |
+| Ticket scheduling | Dependency-gated. Up to `max_parallel_agents` (default 3) Developers run concurrently.     |
+| Ticket `done`     | App polls `gh pr view`; merged PR ⇒ ticket `done`, worktree removed, dependents unblocked. |
+| Tester            | Review-only: runs existing tests, posts a PR review (approve / request changes).           |
+| Approval gates    | User must (1) answer questions, (2) approve features, (3) approve tickets.                 |
+| Doc updates       | Diff-driven. Only new/changed content produces new questions/features/tickets.             |
+| Phases            | Each branch of the docs repo is a phase. The user picks the active phase; questions, features, tickets and the docs scan belong to one phase. |
+| Permissions       | Agents run `claude --dangerously-skip-permissions`; isolation comes from the worktree/branch.|
+| Models            | TechLead: Opus. Developer + Tester: Sonnet. Overridable in project settings.               |
+| Review loop       | Tester "request changes" ⇒ Developer auto re-dispatched on same branch, max 2 rounds, then waits for user. |
+| Agent exit        | tmux pane closes on `claude` exit + `docket` status callback. Pane closed without callback ⇒ run failed. |
+| UI layout         | Sidebar (nav) + main pane + status/command bar. One project open at a time.                |
+| Text editing      | Inline multi-line textarea inside the TUI (no external editor).                            |
+| Pipeline progress | Stepper on Dashboard with the current gate highlighted and a one-key continue action.      |
+| Agent isolation   | Spawned agents never see the user's `~/.claude` (skills, commands, agents, hooks, plugins, CLAUDE.md, MCP). Each role gets a docket-owned config dir. |
+| Skills            | Only skills bundled in docket's source (`skills/<role>/…`, embedded in the binary) are available to agents; they are copied into the role's config dir on every spawn. |
+
+---
+
+## 2. Data model
+
+All entities belong to exactly one **Project**. Each project has its own SQLite database.
+
+### Project
+| Field          | Notes                                                                 |
+| -------------- | --------------------------------------------------------------------- |
+| name           | Display name                                                          |
+| slug           | Derived from name; used for tmux session names and branch prefixes    |
+| description    |                                                                       |
+| repo_url       | GitHub repo URL (the codebase agents work on)                         |
+| repo_path      | Local clone of `repo_url`. App data lives at `<repo_path>/.docket/`   |
+| docs_repo_url  | Git repo containing project documentation (Markdown)                  |
+| settings       | `max_parallel_agents` (3), `base_branch` (develop), `pr_target` (develop), `compose_file` (optional), `max_review_rounds` (2), `model.techlead` (opus), `model.developer` (sonnet), `model.tester` (sonnet) |
+
+Layout under `<repo_path>/.docket/` (added to `.git/info/exclude` automatically):
+
+```
+.docket/
+  po.sqlite            # project database
+  docker-compose.yml   # shared dev DB, generated by TechLead on first run
+  daemon.pid / daemon.sock  # background orchestrator
+  claude-home/<role>/  # isolated CLAUDE_CONFIG_DIR per role: skills/, agents/, CLAUDE.md, settings.json
+  mcp.json             # the only MCP config agents load (codegraph)
+  docs/                # clone of docs_repo_url
+  worktrees/<ticket>/  # one git worktree per in-progress ticket
+  logs/<agent-run>.log # captured tmux output per agent run
+  context/             # generated TICKET.md / 3TH_DOCUMENT.md per run
+```
+
+### Document
+| Field        | Notes                                                        |
+| ------------ | ------------------------------------------------------------ |
+| path         | Path inside docs repo                                        |
+| content_hash | Used to detect changes between scans                         |
+| last_scanned_commit | Git commit of docs repo at last scan                  |
+
+### Question
+| Field     | Notes                                                        |
+| --------- | ------------------------------------------------------------ |
+| text      | Generated by TechLead                                        |
+| answer    | Written by user in TUI; nullable                             |
+| status    | `open` \| `answered` \| `skipped`                            |
+| source    | Which document(s) / code area triggered the question          |
+
+### Feature
+| Field        | Notes                                                     |
+| ------------ | --------------------------------------------------------- |
+| title        |                                                           |
+| description  |                                                           |
+| documents    | Related document paths                                    |
+| status       | `draft` \| `approved` \| `outdated`                       |
+
+### Ticket
+| Field               | Notes                                                                       |
+| ------------------- | --------------------------------------------------------------------------- |
+| title               |                                                                             |
+| requirements        | Markdown                                                                    |
+| acceptance_criteria | Markdown checklist                                                          |
+| feature_id          | Parent feature                                                              |
+| depends_on          | List of ticket ids. Dispatchable only when all are `done`                   |
+| status              | `backlog` \| `pending` \| `processing` \| `wait_review` \| `done` \| `outdated` |
+| branch / pr_url     | Set by Developer agent                                                      |
+| locked_by           | Agent run id currently holding the ticket (ticket lock)                     |
+
+Status meaning:
+- `backlog` – generated, not yet approved by user
+- `pending` – approved, waiting for dependencies / free agent slot
+- `processing` – a Developer agent holds the lock and is working
+- `wait_review` – PR opened; Tester review + user review in progress
+- `done` – PR merged (detected via `gh`)
+- `outdated` – superseded by a document change; never auto-reopened
+
+### ThirdPartyDocument
+| Field    | Notes                                                                          |
+| -------- | ------------------------------------------------------------------------------ |
+| type     | `link` \| `cached` \| `note`                                                   |
+| title    |                                                                                |
+| url      | For `link` and `cached`                                                        |
+| content  | For `cached` (fetched page/markdown) and `note` (free-text project knowledge)  |
+| note     | Optional comment for `link`                                                    |
+
+All ThirdPartyDocuments are rendered into `3TH_DOCUMENT.md` for every agent run.
+
+---
+
+## 3. Flow
+
+### 3.1 First run
+```
+create project
+  → clone repo + docs repo, codegraph init on develop, start daemon
+  → TechLead generates .docket/docker-compose.yml (DB matching the codebase) → daemon runs `docker compose up -d`
+  → scan documents            (TechLead)
+  → generate questions        (TechLead)
+  → [GATE] user answers / skips questions
+  → analyse codebase          (TechLead via codegraph)
+  → generate features         (TechLead)
+  → [GATE] user approves / edits features
+  → generate tickets          (TechLead)
+  → [GATE] user approves / edits tickets        (status backlog → pending)
+  → dispatch tickets          (orchestrator, dependency-gated, N parallel)
+  → Developer implements, opens PR → ticket wait_review
+  → Tester reviews PR
+  → user reviews / merges PR on GitHub
+  → app detects merge → ticket done → unblock dependents
+```
+
+### 3.2 Document updated / added
+1. App pulls docs repo and diffs against `last_scanned_commit` (new, modified, deleted files).
+2. TechLead receives **only the diff** plus the existing questions/features/tickets as context.
+3. TechLead may: add new questions, add new features/tickets, mark existing features/tickets `outdated`.
+4. `done` tickets are never modified. `processing` tickets are not touched; the user is warned.
+5. The same three approval gates apply to new items.
+
+### 3.3 Phases (docs branches)
+- The project has one **active phase** = a branch of the docs repo (default: the docs repo's default branch,
+  or the "Docs phase" chosen when creating the project).
+- Switch from the Docs view (Enter on a phase row), `:phase <branch>` or `docket phase set <branch>`.
+  Refused while TechLead is running.
+- On switch the daemon fetches, checks the branch out in `.docket/docs/` and scans it. The first scan of a phase
+  is diffed against the **previous active phase**, so TechLead (`docdiff`) only plans what the new phase adds or
+  changes. Later rescans of the same phase diff against its own last scan.
+- Questions, features, tickets and documents are scoped to their phase; views show the active phase only.
+  TechLead's PROJECT.md lists features of other phases so it never duplicates them.
+- Only the active phase's tickets are dispatched. Running agents, reviews and PR polling of earlier phases continue.
+- The daemon re-fetches the docs repo every 60 s so newly pushed branches appear as phases.
+
+### 3.4 PR merge conflicts (auto-resolve)
+- The daemon polls every open ticket PR (`gh pr view --json state,mergeable`) every 60 s, ~15 s after any PR of
+  the project merges (the base moved), and immediately when the user opens the `wait_review` filter.
+- `CONFLICTING` → ticket flagged `⚔ conflict`; a Developer run with task `resolve-conflicts` (skill of the same
+  name) starts on the ticket's branch/worktree: rebase onto `origin/<pr_target>` (never merge the target in),
+  resolve keeping both this ticket's intent and the already-merged changes (TICKET.md lists recently merged
+  tickets), run tests, `push --force-with-lease`, comment on the PR. Counts as a Developer slot.
+- Success → back to `wait_review`, review state reset so the Tester re-reviews. `MERGEABLE` clears the flag.
+- At most 2 attempts while the PR keeps conflicting; then (or when the agent reports a product decision is
+  needed) the ticket stays `wait_review` with `needs_user`.
+
+### 3.5 Dispatch rules
+- A ticket is dispatchable when: `status = pending` AND every `depends_on` ticket is `done` AND it belongs to the active phase.
+- At most `max_parallel_agents` Developer agents per project.
+- Dispatch acquires a ticket lock (`locked_by`), sets `processing`, creates the worktree, starts the agent.
+- If an agent exits without opening a PR, the ticket returns to `pending`, lock released, worktree kept for inspection,
+  and the ticket is flagged `needs_user` so a crashing agent is not re-spawned in a loop (`a` in the TUI resumes it).
+- Stopping a Developer from the TUI moves its ticket back to `backlog`; restarting makes it `pending` again.
+- Tester review result `request_changes` ⇒ ticket back to `processing`, Developer restarted on the same branch with
+  the review comments appended to `TICKET.md`. After `max_review_rounds` (default 2) the ticket stays `wait_review`
+  and is flagged `needs_user` in the TUI.
+
+---
+
+## 4. Agents
+
+Every agent is a `claude` process launched in a tmux session named
+`po-<project-slug>-<role>-<ticket-id|run-id>`. The app writes the agent's context files into
+`.docket/context/<run-id>/` and passes them via the prompt. Agents report back by running
+`docket` CLI subcommands (e.g. `docket ticket status <id> wait_review --pr <url>`), which the
+prompt instructs them to call. All agents run with `--dangerously-skip-permissions` and the role's model.
+A run ends when the tmux pane exits; if no status callback was received the run is marked `failed`
+and the captured pane output is saved to `.docket/logs/`.
+
+### TechLead
+- **Working dir:** `<repo_path>` on `develop` (pulled before each run).
+- **Reads:** documents, codegraph index, questions + answers, existing features/tickets, 3rd-party docs.
+- **Writes:** questions, features, tickets (via `docket` CLI).
+- **Permissions:** read repo, manage GitHub repo (create PR, comment on PR).
+- **Rule:** always read code through codegraph, never raw file dumps for discovery.
+- Also acts as orchestrator advisor: may re-order ticket dependencies when asked.
+- **First run only:** inspects the codebase (ORM, migrations, env files) and writes `.docket/docker-compose.yml`
+  with the DB/services the project needs, plus the env values Developers must use.
+
+### Developer
+- **Working dir:** `.docket/worktrees/<ticket>/`, branch `ticket/<id>-<slug>` from `origin/develop`.
+- **Context:** `TICKET.md` (title, requirements, acceptance criteria, feature summary, dependency tickets' PR links), `3TH_DOCUMENT.md`.
+- **Database:** uses the project's shared compose DB from `.docket/docker-compose.yml` (connection info injected into `TICKET.md`). Must not start its own containers.
+- **Done when:** PR opened against `develop`, ticket status set to `wait_review` with `pr_url`.
+
+### TechLead ticket chat (interactive, untracked)
+- **Trigger:** user presses `c` on a ticket (Tickets view). Session `docket-<slug>-techlead-chat-t<id>`, TechLead home,
+  skill `ticket-chat`, context TICKET.md + PROJECT.md. Not a run (no slot, never reaped); `X` ends it.
+- **Answers** questions about the ticket. **Changes** are always proposed first (per ticket: field before → after,
+  update / redo / follow-up) and applied only after the user confirms in the chat.
+- **Apply rules:** `backlog`/`pending` → `docket ticket update`; `processing`/`wait_review` whose requirements or
+  acceptance changed → `ticket update` + `docket ticket redo <id> --reason …`; `done` → never edited, a follow-up
+  ticket is created (`--depends <done id>`, lands in backlog); obsolete backlog/pending → `ticket outdated`.
+- **Redo** (daemon): stops the ticket's running Developer/Tester, resets review state/rounds, sets `pending`;
+  dispatch re-runs the Developer on the SAME branch/worktree/PR with a "Change request" section in TICKET.md.
+
+### TechLead new-ticket chat (interactive, untracked)
+- **Trigger:** `N` in the Tickets view. Session `docket-<slug>-techlead-chat-new` (one per project), skill `create-ticket`.
+- The user describes the work; TechLead checks existing tickets/features/docs/code, asks at most 3 essential
+  questions, then creates the ticket(s) immediately via `docket ticket add` (existing or new draft feature,
+  dependency-ordered split, testable acceptance criteria, `Team skills:` line). Tickets land in `backlog`, so the
+  user's approval (`a`/`A`) still gates dispatch.
+
+### Advisor (interactive, untracked)
+- **Trigger:** user presses `c` on a question.
+- **Does:** explains the question (meaning, background with quoted sources, options + trade-offs, recommendation)
+  and answers follow-ups in the user's language. Read-only; records the answer only when the user asks.
+- **Runtime:** interactive `claude` in tmux `docket-<slug>-advisor-q<id>`, TechLead model, not a run (never reaped
+  or counted in agent slots).
+
+### Tester
+- **Trigger:** ticket enters `wait_review`.
+- **Working dir:** a temporary checkout of the PR branch.
+- **Does:** runs existing test suite, checks acceptance criteria, posts a GitHub PR review (approve or request changes). Does **not** write code.
+- **Result:** review summary stored on the ticket and shown in TUI.
+
+---
+
+## 5. TUI
+
+- Go + Bubble Tea. Vim-style navigation. Sidebar + main pane + status/command bar.
+- One project open at a time (`:project` to switch); agents of other projects keep running in tmux.
+- Views: Projects, Dashboard (stepper + board summary), Questions, Features, Tickets, Agents, Docs.
+- Long text is edited in an inline textarea (`e` on a field, `Ctrl-S` save, `Esc` cancel).
+- Agents view: `Enter` attaches to the agent's tmux session, `x` stops, `r` restarts.
+- The TUI is a client of the daemon (unix socket). It never dispatches or polls itself.
+- Full screen-by-screen design: `docs/tui-ui-design.md`.
+
+## 6. Background daemon
+
+- `docket daemon --project <repo_path>` runs per project; the TUI auto-starts it when a project is opened.
+- Responsibilities: dependency-gated dispatch, tmux session lifecycle, `gh pr view` polling (every 60s), Tester
+  trigger on `wait_review`, review-loop re-dispatch, worktree cleanup on `done`, `docker compose up` of the shared DB.
+- Keeps running after the TUI exits. `docket daemon stop` stops it; running agents in tmux are left untouched.
+- TUI ↔ daemon over a unix socket at `.docket/daemon.sock` for control (TechLead runs, rescan, stop/restart, kick).
+  Data writes (answers, approvals, agents' `docket …` calls) go straight to SQLite (WAL) and then kick the daemon.
+- All state is in SQLite, so a daemon restart resumes from the database (re-attaches to existing tmux sessions by name).
+
+## 7. Agent isolation & bundled skills
+
+Goal: the user's own Claude Code setup (global skills, commands, agents, hooks, plugins, `~/.claude/CLAUDE.md`,
+user-scope MCP) must have **zero** influence on spawned agents. Agents only get what docket ships.
+
+### Bundled skills (in this repo)
+```
+skills/
+  common/      # loaded by every role   e.g. docket-cli/, ticket-status/, codegraph-usage/
+  techlead/    # scan-docs/, generate-questions/, generate-features/, generate-tickets/, generate-compose/
+  developer/   # implement-ticket/, open-pr/, use-shared-db/
+  tester/      # review-pr/
+  manifest.yaml        # role → skill list; the only source of truth for what an agent may load
+```
+- Skills are Claude Code skill folders (`SKILL.md` + optional scripts) embedded in the Go binary (`embed.FS`).
+- Adding a skill = add a folder here and list it in `skills/manifest.yaml`. Nothing is read from the user's machine.
+
+### Team skills for Developers and TechLead (pulled on every start)
+- Before every Developer run (implement, rework, resolve-conflicts), every TechLead run and every TechLead ticket
+  chat, docket shallow-clones or `git pull`s each
+  repo in `team_skill_repos` (global config, old key `developer_skill_repos` still read; default `https://github.com/jamesngdev/be-skills`) into
+  `~/.config/docket/skill-sources/`. Any directory with a `SKILL.md` under `skills/` or the repo root is a skill.
+- Those skills are copied into the role's isolated home next to the bundled ones (`.`-dirs, `__pycache__`,
+  `node_modules` skipped; script permissions kept). Bundled docket skills win on a name clash.
+- The kickoff prompt lists every team skill with its description and requires the Developer to apply each one that
+  matches the change before opening/updating the PR, and to report applied/skipped skills in a "Team skills" PR
+  section.
+- TechLead's prompt asks it to fold the skills' rules into requirements/acceptance criteria and to end every
+  ticket's requirements with `Team skills: <names>` (what the Developer must apply).
+- Pull failure → the cached copy is used and a `skills` activity entry is logged. `team_skill_repos: []`
+  disables team skills.
+
+### Spawn procedure (per agent run)
+1. Resolve role → skill list from the manifest.
+2. (Re)build `.docket/claude-home/<role>/` from scratch: `skills/` (copied from the bundle), `CLAUDE.md` (role prompt),
+   `settings.json` (model, permissions), `agents/` (empty unless the role defines sub-agents). Rebuilt on every spawn
+   so docket upgrades propagate and no stale or user-added files survive.
+3. Write `.docket/mcp.json` containing only the codegraph server.
+4. Launch inside tmux:
+   ```
+   CLAUDE_CONFIG_DIR=<repo>/.docket/claude-home/<role>    CLAUDE_CODE_OAUTH_TOKEN=<token from docket config>    CLAUDE_CODE_DISABLE_AUTO_MEMORY=1    claude --setting-sources user           --strict-mcp-config --mcp-config <repo>/.docket/mcp.json           --dangerously-skip-permissions --model <role model>           "<kickoff prompt pointing at TICKET.md / 3TH_DOCUMENT.md>"
+   ```
+   - `CLAUDE_CONFIG_DIR` relocates the whole user scope to the docket-owned dir, so `~/.claude` is never read.
+   - `--setting-sources user` = only the isolated home; the repo's own `.claude/` and `CLAUDE.md` are not loaded
+     either, so the worktree stays untouched (no files written into the user's repo).
+   - `--strict-mcp-config` ignores every other MCP source.
+5. Auth: agents reuse the user's normal `claude` login. Claude keys its macOS keychain item by config dir, so the
+   spawn sets `CLAUDE_SECURESTORAGE_CONFIG_DIR=""` (empty ⇒ default item) while `CLAUDE_CONFIG_DIR` stays isolated.
+   Optional: `docket auth set-token <sk-ant-…>` (from `claude setup-token`) injects `CLAUDE_CODE_OAUTH_TOKEN` instead.
+
+### Must verify in the first implementation spike
+- That `--setting-sources user` really stops project-scope `.claude/skills`, `.claude/agents` and `CLAUDE.md` from loading
+  (docs only describe it for settings files). Fallback if not: docket overlays its own `.claude/` in the working dir
+  and excludes it from git.
+- That `CLAUDE_CONFIG_DIR` also isolates user-scope MCP from `~/.claude.json`. `--strict-mcp-config` is the safety net.
+- Test method: put marker skills in `~/.claude/skills` and in the repo's `.claude/skills`, spawn an agent, ask it to list
+  skills; only bundled ones may appear.
+
+## 8. External dependencies
+
+`git`, `gh` (authenticated), `tmux`, `claude` (logged in), `codegraph`, `docker` + `docker compose`.
+The app checks all of them on startup and shows what is missing.
+
+---
+
+## 9. Open questions
+
+- Confirm the isolation flags above in a spike before building the spawn module (see §7).

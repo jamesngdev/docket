@@ -1,0 +1,7 @@
+# local agent / editor state
+.claude/
+# docket data when docket is used on its own repo
+.docket/
+.codegraph/
+# binaries
+/docket
