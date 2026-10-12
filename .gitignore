@@ -5,3 +5,10 @@
 .codegraph/
 # binaries
 /docket
+
+# desktop app
+desktop/frontend/node_modules/
+desktop/frontend/dist/*
+!desktop/frontend/dist/.gitkeep
+desktop/frontend/wailsjs/
+desktop/build/bin/

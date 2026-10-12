@@ -74,6 +74,30 @@ docket                # open the TUI
    (detach with `Ctrl-b d`).
 5. Review and merge PRs on GitHub. docket notices the merge, marks the ticket done and unblocks its dependents.
 
+## Desktop app (macOS)
+
+A Wails v2 + React app with an Orca-style layout, for people who prefer a GUI. It is a second client of the same
+engine: TUI, desktop app and CLI can be used side by side on the same projects.
+
+```bash
+make desktop-dev     # hot-reload development (also reachable in a browser at http://localhost:34115)
+make desktop         # produces desktop/build/bin/Docket.app (universal: arm64 + x86_64)
+make desktop-open    # produce and open it
+```
+
+- Projects home with an environment check (claude, gh, git, tmux, docker, codegraph).
+- Dashboard pipeline stepper with the one next action, board summary and activity feed.
+- Questions as cards: parsed `(A)`/`(B)` options become **Choose** buttons, the recommendation is highlighted,
+  **Ask Advisor** opens the explain chat.
+- Features with inline approve / reject / edit.
+- Kanban tickets: drag `backlog → pending` to approve, click a card for the drawer (edit requirements, acceptance,
+  dependencies; chat with TechLead; watch or stop the agent; open the PR). **New ticket** opens the TechLead chat.
+- Agents table (watch, stop, restart, full log) and live chats; Docs with the phase switcher and third-party docs.
+- Agent terminals and chats open in Terminal.app for now; embedded xterm.js panes are the next phase.
+
+The `.app` binary is also the CLI (`Docket.app/Contents/MacOS/Docket help`), so the daemon and agents it starts call
+back into it. A daemon is only replaced by a **newer** binary, so the TUI and the app never fight over it.
+
 ## The TUI
 
 Sidebar views (`Tab` / `1`–`6`): Dashboard · Questions · Features · Tickets · Agents · Docs.
