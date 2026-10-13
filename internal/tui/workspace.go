@@ -3,10 +3,12 @@ package tui
 import (
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"docket/internal/config"
 	"docket/internal/daemon"
 	"docket/internal/gitops"
 	"docket/internal/paths"
@@ -14,6 +16,7 @@ import (
 	"docket/internal/sh"
 	"docket/internal/store"
 	"docket/internal/tmux"
+	"docket/internal/usage"
 )
 
 // snapshot is everything views render, reloaded from SQLite every tick.
@@ -30,6 +33,7 @@ type snapshot struct {
 	pane      string          // last lines of the selected agent's tmux pane
 	phases    []string        // docs branches (loaded on the Docs view only)
 	sessions  map[string]bool // live tmux sessions (question chats)
+	discord   bool            // Discord Connect configured (bot token + project channel)
 	err       error
 }
 
@@ -56,9 +60,16 @@ type workspace struct {
 	cmdMode bool
 	help    bool
 	flash   flashMsg
-	health  string
+	missing string // required binaries not on PATH, shown in the header
 	agents  *agentsView
 	pending []tea.Cmd // background work queued by editor callbacks
+
+	usage      usage.Limits // Claude subscription usage (refreshed by refreshUsage)
+	usageErr   error
+	usageAt    time.Time
+	usageBusy  bool       // a usage fetch is in flight
+	usageShown [4]float64 // eased bar values per window (see usageRows)
+	sideY      float64    // animated sidebar marker position (eases toward active)
 }
 
 func openWorkspace(repo string) (*workspace, error) {
@@ -73,15 +84,15 @@ func openWorkspace(repo string) (*workspace, error) {
 	ws := &workspace{paths: p, db: db, cmdline: textinput.New(), agents: &agentsView{}}
 	ws.cmdline.Prompt = ":"
 	ws.views = []view{&dashboardView{}, &questionsView{}, &featuresView{}, &ticketsView{}, ws.agents, &docsView{}}
-	var parts []string
+	var missing []string
 	for _, bin := range []string{"gh", "docker", "tmux", "claude", "codegraph"} {
-		mark := sOK.Render("✓")
 		if !sh.Has(bin) {
-			mark = sErr.Render("✗")
+			missing = append(missing, bin)
 		}
-		parts = append(parts, bin+" "+mark)
 	}
-	ws.health = strings.Join(parts, " ")
+	if len(missing) > 0 {
+		ws.missing = sErr.Render("✗ missing " + strings.Join(missing, ", "))
+	}
 	if err := daemon.EnsureRunning(p); err != nil {
 		ws.flash = flashMsg{text: "daemon: " + err.Error(), err: true}
 	}
@@ -107,6 +118,9 @@ func (ws *workspace) load() tea.Cmd {
 		s.activity, _ = db.RecentActivity(12)
 		s.daemonUp = daemon.Alive(p)
 		s.sessions = tmux.List()
+		if cfg, err := config.Load(); err == nil {
+			s.discord = cfg.DiscordToken != "" && s.project.Settings.DiscordChannel != ""
+		}
 		if wantPhases {
 			s.phases, _ = gitops.Branches(p.Docs())
 		}

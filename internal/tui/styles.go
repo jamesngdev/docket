@@ -13,6 +13,11 @@ var (
 	colOK     = lipgloss.AdaptiveColor{Light: "#15803D", Dark: "#4ADE80"}
 	colWarn   = lipgloss.AdaptiveColor{Light: "#B45309", Dark: "#FBBF24"}
 	colErr    = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
+	colInfo   = lipgloss.AdaptiveColor{Light: "#0369A1", Dark: "#38BDF8"}
+	colRule   = lipgloss.AdaptiveColor{Light: "#D1D5DB", Dark: "#3F3F50"}
+	colSelBg  = lipgloss.AdaptiveColor{Light: "#EDE9FE", Dark: "#2A2540"}
+	colChipBg = lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#262633"}
+	colOnAcc  = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#16131F"}
 
 	sAccent   = lipgloss.NewStyle().Foreground(colAccent)
 	sBold     = lipgloss.NewStyle().Bold(true)
@@ -22,7 +27,10 @@ var (
 	sWarn     = lipgloss.NewStyle().Foreground(colWarn)
 	sErr      = lipgloss.NewStyle().Foreground(colErr)
 	sSelected = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
-	sFrame    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colMuted)
+	sInfo     = lipgloss.NewStyle().Foreground(colInfo)
+	sRule     = lipgloss.NewStyle().Foreground(colRule)
+	sSelRow   = lipgloss.NewStyle().Bold(true).Foreground(colAccent).Background(colSelBg)
+	sFrame    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colRule)
 	sModal    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colAccent).Padding(0, 1)
 )
 
@@ -34,10 +42,11 @@ func trunc(s string, w int) string {
 	return ansi.Truncate(s, w, "…")
 }
 
-// cursorLine renders one list row with a selection marker.
+// cursorLine renders one list row; the selected row is a full-width highlight band.
+// Inner colours are dropped on the band because nested ANSI resets would cut the background.
 func cursorLine(selected bool, s string, w int) string {
 	if selected {
-		return sSelected.Render(trunc("▸ "+s, w))
+		return sSelRow.Width(w).Render(trunc("▌ "+ansi.Strip(s), w))
 	}
 	return trunc("  "+s, w)
 }
@@ -97,14 +106,31 @@ func lines(text string, w, max int) []string {
 	return out
 }
 
+// statusStyle colours a status word to match its icon.
+func statusStyle(status string) lipgloss.Style {
+	switch status {
+	case "done", "approved", "answered":
+		return sOK
+	case "processing", "running":
+		return sAccent
+	case "wait_review":
+		return sInfo
+	case "pending", "open", "draft":
+		return sWarn
+	case "failed":
+		return sErr
+	}
+	return sMuted
+}
+
 func statusIcon(status string) string {
 	switch status {
 	case "done", "approved", "answered":
 		return sOK.Render("✓")
 	case "processing", "running":
-		return sAccent.Render("◐")
+		return sAccent.Render(spin(frame))
 	case "wait_review":
-		return sWarn.Render("◔")
+		return sInfo.Render("◔")
 	case "pending", "open", "draft":
 		return sWarn.Render("●")
 	case "outdated", "skipped", "stopped":

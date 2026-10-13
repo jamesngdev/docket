@@ -55,6 +55,9 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE TABLE IF NOT EXISTS activity (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, message TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS discord_threads (
+  thread_id TEXT PRIMARY KEY, session_id TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL
 );`
 
 // Open opens (and migrates) the project database at path.

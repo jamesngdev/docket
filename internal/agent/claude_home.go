@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 
 	"gopkg.in/yaml.v3"
@@ -25,6 +26,7 @@ const (
 	RoleTechLead  = "techlead"
 	RoleDeveloper = "developer"
 	RoleTester    = "tester"
+	RoleSupport   = "support" // read-only Backend Support answering Discord
 )
 
 // Manifest maps role → allowed skill names (skills/manifest.yaml).
@@ -77,7 +79,7 @@ func BuildHome(home, role, model, workdir string, extra []extskills.Skill) error
 	}
 	settings := map[string]any{
 		"model":                             model,
-		"permissions":                       map[string]any{"defaultMode": "bypassPermissions"},
+		"permissions":                       permissionsFor(role),
 		"skipDangerousModePermissionPrompt": true,
 		"includeCoAuthoredBy":               false,
 	}
@@ -85,6 +87,23 @@ func BuildHome(home, role, model, workdir string, extra []extskills.Skill) error
 		return err
 	}
 	return markOnboarded(home, workdir)
+}
+
+// permissionsFor returns the role's permission settings. Workers run unattended
+// with bypass; Backend Support runs headless in default mode, where anything
+// outside its allowlist is denied (nobody can approve a prompt), and secrets
+// stay unreadable even inside its working directory.
+func permissionsFor(role string) map[string]any {
+	if role != RoleSupport {
+		return map[string]any{"defaultMode": "bypassPermissions"}
+	}
+	return map[string]any{
+		"defaultMode": "default",
+		"deny": []string{
+			"Read(**/.env)", "Read(**/.env.*)", "Read(**/*.pem)", "Read(**/*.key)",
+			"Read(**/.docket/claude-home/**)", "Read(**/.credentials.json)",
+		},
+	}
 }
 
 // skillFile is one file to place under <home>/skills/.
@@ -237,9 +256,35 @@ func writeJSON(p string, v any) error {
 	return os.Rename(tmp.Name(), p)
 }
 
-// WriteMCPConfig writes the only MCP config agents load (codegraph).
+// WriteMCPConfig writes the only MCP config agents load: codegraph, plus
+// Pencil (design files) when the Pencil app is installed.
 func WriteMCPConfig(p string) error {
-	return writeJSON(p, map[string]any{"mcpServers": map[string]any{
+	servers := map[string]any{
 		"codegraph": map[string]any{"type": "stdio", "command": "codegraph", "args": []string{"serve", "--mcp"}},
-	}})
+	}
+	if pencil := pencilServer(); pencil != nil {
+		servers["pencil"] = pencil
+	}
+	return writeJSON(p, map[string]any{"mcpServers": servers})
+}
+
+// pencilServer returns the Pencil MCP server definition: the user's own
+// (~/.claude.json mcpServers.pencil) if configured, else the binary bundled
+// with Pencil.app. nil when Pencil is not installed.
+func pencilServer() map[string]any {
+	home, _ := os.UserHomeDir()
+	if b, err := os.ReadFile(filepath.Join(home, ".claude.json")); err == nil {
+		var cfg struct {
+			MCPServers map[string]map[string]any `json:"mcpServers"`
+		}
+		if json.Unmarshal(b, &cfg) == nil && cfg.MCPServers["pencil"] != nil {
+			return cfg.MCPServers["pencil"]
+		}
+	}
+	arch := map[string]string{"arm64": "arm64", "amd64": "x64"}[runtime.GOARCH]
+	bin := "/Applications/Pencil.app/Contents/Resources/app.asar.unpacked/out/mcp-server-darwin-" + arch
+	if _, err := os.Stat(bin); runtime.GOOS != "darwin" || err != nil {
+		return nil
+	}
+	return map[string]any{"type": "stdio", "command": bin, "args": []string{"--app", "desktop"}}
 }

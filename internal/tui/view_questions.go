@@ -14,7 +14,7 @@ import (
 	"docket/internal/tmux"
 )
 
-type questionsView struct{ cursor int }
+type questionsView struct{ listCursor }
 
 func (questionsView) name() string { return "Questions" }
 func (questionsView) badge(s *snapshot) int {
@@ -90,10 +90,11 @@ func (v *questionsView) render(ws *workspace, w, h int) string {
 	v.cursor = clampCursor(v.cursor, len(qs))
 	var rows []string
 	for _, q := range qs {
-		row := fmt.Sprintf("%s Q%-3d %s", statusIcon(q.Status), q.ID, oneLine(q.Text))
+		chat := ""
 		if ws.snap.sessions[agent.QuestionSession(ws.snap.project.Slug, q.ID)] {
-			row = fmt.Sprintf("%s Q%-3d %s %s", statusIcon(q.Status), q.ID, sAccent.Render("💬"), oneLine(q.Text))
+			chat = sAccent.Render("💬 ")
 		}
+		row := fmt.Sprintf("%s %s %s%s", statusIcon(q.Status), sBold.Render(fmt.Sprintf("Q%-3d", q.ID)), chat, oneLine(q.Text))
 		rows = append(rows, row)
 	}
 	detail := ""
@@ -114,21 +115,21 @@ var (
 // questionDetail renders a question with source items and options on separate lines.
 func questionDetail(q store.Question, chatting bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s  %s %s", sBold.Render(fmt.Sprintf("Q%d", q.ID)), statusIcon(q.Status), q.Status)
+	fmt.Fprintf(&b, "%s  %s %s", sAccent.Bold(true).Render(fmt.Sprintf("Q%d", q.ID)), statusIcon(q.Status), statusStyle(q.Status).Render(q.Status))
 	if chatting {
 		b.WriteString(sAccent.Render("   💬 chat running — c to reopen, X to end"))
 	}
-	b.WriteString("\n\n" + sBold.Render("NGUỒN / SOURCE") + "\n")
+	b.WriteString("\n\n" + sTitle.Render("NGUỒN / SOURCE") + "\n")
 	for _, src := range strings.Split(q.Source, ";") {
 		if src = strings.TrimSpace(src); src != "" {
 			b.WriteString(sMuted.Render("  • "+src) + "\n")
 		}
 	}
-	b.WriteString("\n" + sBold.Render("CÂU HỎI / QUESTION") + "\n")
+	b.WriteString("\n" + sTitle.Render("CÂU HỎI / QUESTION") + "\n")
 	text := optionRe.ReplaceAllString(q.Text, "\n  $1 ")
 	text = recommendRe.ReplaceAllString(text, "\n\n"+sAccent.Render("→ $1:")+" ")
 	b.WriteString(text + "\n")
-	b.WriteString("\n" + sBold.Render("TRẢ LỜI / ANSWER") + "\n")
+	b.WriteString("\n" + sTitle.Render("TRẢ LỜI / ANSWER") + "\n")
 	if strings.TrimSpace(q.Answer) == "" {
 		b.WriteString(sMuted.Render("(chưa trả lời — Enter để trả lời, c để hỏi agent giải thích thêm)"))
 	} else {

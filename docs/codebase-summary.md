@@ -19,12 +19,15 @@ make test                            # vet + tests
 | `main.go` | No args → TUI, otherwise CLI subcommands |
 | `internal/paths` | Every path under `<repo>/.docket/`, socket path, global config dir |
 | `internal/config` | `~/.config/docket/config.yaml`: registered projects, OAuth token (0600) |
+| `internal/usage` | Claude subscription usage (5h/weekly limits) from the OAuth usage API; reads the token, never refreshes it |
 | `internal/store` | SQLite schema + CRUD: project, documents, questions, features, tickets, third_docs, runs, activity; `Dispatchable` |
 | `internal/store/phases.go` | Phases = docs branches: active phase, per-phase docs scan + commits, phase-scoped queries |
 | `internal/docscan` | Hash docs `*.md`, diff vs previous scan (A/M/D) |
 | `internal/gitops`, `internal/gh`, `internal/tmux`, `internal/sh` | Thin wrappers over git, gh, tmux, exec |
 | `skills/` | Embedded skill bundle + `manifest.yaml` (role → skills). The only skills agents ever get |
 | `internal/agent` | Isolated `CLAUDE_CONFIG_DIR` per role, context files (PROJECT.md, TICKET.md, 3TH_DOCUMENT.md), kickoff prompts, tmux launch |
+| `internal/discord` | Discord Connect: per-daemon gateway connection, @mention → thread, follow-ups resume the thread's session, chunked replies |
+| `internal/support` | Read-only Backend Support: headless `claude -p` (+`--resume`), no shell (Read/Grep/Glob only) in a detached base-branch worktree; project state + git log pre-rendered into its context dir |
 | `internal/daemon` | Loop every 5s + on kick: reap runs, review loop, start tester, dispatch developers, poll PRs (60s); TechLead tasks; docs rescan; compose up |
 | `internal/ipc` | Newline-JSON over unix socket (ping, kick, techlead, rescan, stop, restart, compose, shutdown) |
 | `internal/cli` | Agent-facing commands (`question/feature/ticket/review/run`), `show`, `daemon`, `auth` |

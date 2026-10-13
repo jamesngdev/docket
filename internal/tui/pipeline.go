@@ -106,41 +106,42 @@ func nextStep(ws *workspace) (string, func() tea.Cmd) {
 	return "watch agents", goTo(vAgents)
 }
 
-// stepper renders ✓ Scan ── ● Questions ── … with a detail line.
+// stepper renders ✓ Scan ━━ ● Questions ── … with a detail line. The running
+// step spins and the step waiting on the user pulses.
 func stepper(c counts) (string, string) {
 	type st struct {
-		name, mark, detail string
-	}
-	mark := func(done, current, running bool) string {
-		switch {
-		case running:
-			return sAccent.Render("◐")
-		case current:
-			return sWarn.Render("●")
-		case done:
-			return sOK.Render("✓")
-		}
-		return sMuted.Render("○")
+		name, detail           string
+		done, current, running bool
 	}
 	tl := c.techleadTask
 	steps := []st{
-		{"Scan", mark(c.scanned, !c.scanned, false), fmt.Sprintf("%d docs", c.docs)},
-		{"Questions", mark(c.scanned && c.openQ == 0, c.openQ > 0, tl == agent.TaskBootstrap || tl == agent.TaskDocDiff),
-			fmt.Sprintf("%d/%d answered", c.answeredQ, c.answeredQ+c.openQ)},
-		{"Features", mark(c.approved > 0 && c.drafts == 0, c.drafts > 0, tl == agent.TaskFeatures),
-			fmt.Sprintf("%d to approve", c.drafts)},
-		{"Tickets", mark(c.total > 0 && c.backlog == 0, c.backlog > 0, tl == agent.TaskTickets),
-			fmt.Sprintf("%d to approve", c.backlog)},
-		{"Run", mark(c.total > 0 && c.done == c.total, c.needUs > 0, c.active > 0),
-			fmt.Sprintf("%d/%d done", c.done, c.total)},
+		{"Scan", fmt.Sprintf("%d docs", c.docs), c.scanned, !c.scanned, false},
+		{"Questions", fmt.Sprintf("%d/%d answered", c.answeredQ, c.answeredQ+c.openQ),
+			c.scanned && c.openQ == 0, c.openQ > 0, tl == agent.TaskBootstrap || tl == agent.TaskDocDiff},
+		{"Features", fmt.Sprintf("%d to approve", c.drafts), c.approved > 0 && c.drafts == 0, c.drafts > 0, tl == agent.TaskFeatures},
+		{"Tickets", fmt.Sprintf("%d to approve", c.backlog), c.total > 0 && c.backlog == 0, c.backlog > 0, tl == agent.TaskTickets},
+		{"Run", fmt.Sprintf("%d/%d done", c.done, c.total), c.total > 0 && c.done == c.total, c.needUs > 0, c.active > 0},
 	}
 	var top, bottom string
 	for i, s := range steps {
 		if i > 0 {
-			top += sMuted.Render(" ── ")
-			bottom += "    "
+			link := sRule.Render(" ─── ")
+			if steps[i-1].done {
+				link = sOK.Render(" ━━━ ")
+			}
+			top += link
+			bottom += "     "
 		}
-		top += s.mark + " " + s.name
+		mark, name := sMuted.Render("○"), sMuted.Render(s.name)
+		switch {
+		case s.running:
+			mark, name = sAccent.Render(spin(frame)), sAccent.Bold(true).Render(s.name)
+		case s.current:
+			mark, name = sWarn.Render(pulse("●", "◉")), sWarn.Bold(true).Render(s.name)
+		case s.done:
+			mark, name = sOK.Render("✓"), sBold.Render(s.name)
+		}
+		top += mark + " " + name
 		bottom += padRight(s.detail, len(s.name)+2)
 	}
 	return top, sMuted.Render(bottom)

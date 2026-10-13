@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"docket/internal/sh"
 )
@@ -101,6 +102,18 @@ func AddDetachedWorktree(repo, wt, branch string) error {
 	RemoveWorktree(repo, wt)
 	_, _ = sh.Run(repo, "git", "fetch", "-q", "origin", branch)
 	_, err := sh.Run(repo, "git", "worktree", "add", "--detach", wt, startPoint(repo, branch))
+	return err
+}
+
+// SyncDetachedWorktree keeps a read-only worktree at the tip of origin/<branch>,
+// creating it on first use.
+func SyncDetachedWorktree(repo, wt, branch string) error {
+	_, _ = sh.RunTimeout(time.Minute, repo, "git", "fetch", "-q", "origin", branch) // never stall answers on a hung remote
+	if _, err := os.Stat(wt); err != nil {
+		_, err = sh.Run(repo, "git", "worktree", "add", "--detach", wt, startPoint(repo, branch))
+		return err
+	}
+	_, err := sh.Run(wt, "git", "checkout", "-q", "--detach", "--force", startPoint(repo, branch))
 	return err
 }
 

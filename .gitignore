@@ -5,3 +5,7 @@
 .codegraph/
 # binaries
 /docket
+# desktop app build output (no source tracked)
+desktop/
+# release artifacts
+/dist/

@@ -2,6 +2,7 @@
 package gh
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -27,6 +28,13 @@ func PRStatus(repo, url string) (state, mergeable string, err error) {
 		return strings.Join(f, ""), "UNKNOWN", nil
 	}
 	return f[0], f[1], nil
+}
+
+// MergePR squash-merges a PR and deletes its remote branch. It runs outside
+// any checkout so gh never tries to delete a local branch that a worktree uses.
+func MergePR(url string) error {
+	_, err := sh.RunTimeout(2*time.Minute, os.TempDir(), "gh", "pr", "merge", url, "--squash", "--delete-branch")
+	return err
 }
 
 // PRBranch returns the head branch name of a PR URL.

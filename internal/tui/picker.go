@@ -129,20 +129,53 @@ func (p *picker) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (p *picker) view(w, h int) string {
-	var b strings.Builder
-	b.WriteString(sTitle.Render("PROJECTS") + "\n\n")
-	if len(p.rows) == 0 {
-		b.WriteString(sMuted.Render("No projects yet. Press n to create one.") + "\n")
+// click selects a project row; clicking the selected row opens it.
+func (p *picker) click(m tea.MouseMsg) tea.Cmd {
+	kind, arg := hit(m)
+	i := zoneIndex(arg)
+	if kind != "pick" || i < 0 || i >= len(p.rows) {
+		return nil
 	}
-	inner := w - 6
+	if i != p.cursor {
+		p.cursor = i
+		return nil
+	}
+	return p.update(tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+// logo is the launch-screen wordmark; it gets the shimmer sweep.
+var logo = []string{
+	"█▀▄ █▀█ █▀▀ █▄▀ █▀▀ ▀█▀",
+	"█▄▀ █▄█ █▄▄ █ █ ██▄  █ ",
+}
+
+func (p *picker) view(w, h int) string {
+	inner := w - 8
+	var b strings.Builder
+	b.WriteString("\n")
+	for _, l := range logo {
+		b.WriteString(shimmer(l, sTitle) + "\n")
+	}
+	b.WriteString(sMuted.Render("docs → questions → features → tickets → PRs, by isolated Claude Code agents") + "\n\n")
+	b.WriteString(section("PROJECTS", fmt.Sprintf("%d registered", len(p.rows)), inner) + "\n\n")
+	if len(p.rows) == 0 {
+		b.WriteString(sMuted.Render("  ◌ No projects yet. Press ") + sAccent.Bold(true).Render("n") + sMuted.Render(" to create one.") + "\n")
+	}
 	for i, r := range p.rows {
-		line := fmt.Sprintf("%-22s %-34s %s", trunc(r.name, 22), trunc(r.repo, 34), r.summary)
-		b.WriteString(cursorLine(i == p.cursor, line, inner) + "\n")
+		icon := sOK.Render("●")
+		if r.broken {
+			icon = sErr.Render("✗")
+		}
+		line := fmt.Sprintf("%s %s %s  %s", icon, sBold.Render(padRight(trunc(r.name, 22), 22)), sMuted.Render(padRight(trunc(r.repo, 40), 40)), r.summary)
+		b.WriteString(mark(fmt.Sprintf("pick:%d", i), cursorLine(i == p.cursor, line, inner)) + "\n")
 	}
 	if p.err != "" {
-		b.WriteString("\n" + sErr.Render(trunc(p.err, inner)) + "\n")
+		st, icon := sErr, "✗ "
+		if strings.HasPrefix(p.err, "opening ") {
+			st, icon = sAccent, spin(frame)+" "
+		}
+		b.WriteString("\n" + st.Render(trunc(icon+p.err, inner)) + "\n")
 	}
-	b.WriteString("\n" + sMuted.Render("n new project · Enter open · d remove from list · q quit"))
-	return sFrame.Width(w - 2).Height(h - 2).Render(" docket\n\n" + lipgloss.NewStyle().PaddingLeft(2).Render(b.String()))
+	b.WriteString("\n" + keyHints("n new project · Enter open · d remove from list · q quit", inner))
+	return sFrame.Width(w - 2).Height(h - 2).Render(lipgloss.NewStyle().PaddingLeft(3).Render(b.String()))
 }

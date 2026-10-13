@@ -103,6 +103,21 @@ func write(cmd, sub string, a args) error {
 		db.Log(actor, "ticket #%d redo requested", id)
 		fmt.Printf("ticket #%d will be reworked on its branch %s\n", id, t.Branch)
 		return nil
+	case "ticket merge":
+		return ticketMerge(db, p, a, actor)
+	case "ticket flag":
+		id, err := a.id(0)
+		if err != nil {
+			return err
+		}
+		reason, err := a.need("reason")
+		if err != nil {
+			return err
+		}
+		if err := db.UpdateTicketFields(id, map[string]any{"needs_user": 1}); err != nil {
+			return err
+		}
+		db.Log(actor, "ticket #%d needs you: %s", id, oneLineText(reason))
 	case "ticket outdated":
 		id, err := a.id(0)
 		if err != nil {

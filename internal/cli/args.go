@@ -80,19 +80,7 @@ func projectRepo(a args) (string, error) {
 		return p, nil
 	}
 	dir, _ := os.Getwd()
-	for {
-		if _, err := os.Stat(paths.New(dir).DB()); err == nil {
-			return dir, nil
-		}
-		if _, err := os.Stat(filepath.Join(dir, ".po-tui", "po.sqlite")); err == nil {
-			return dir, project.MigrateLegacy(dir) // project from the po-tui days
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", fmt.Errorf("not inside a docket project (use --project or DOCKET_PROJECT)")
-		}
-		dir = parent
-	}
+	return project.Find(dir)
 }
 
 func openDB(a args) (*store.DB, paths.Project, error) {

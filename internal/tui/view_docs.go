@@ -9,12 +9,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"docket/internal/ipc"
 	"docket/internal/store"
 )
 
-type docsView struct{ cursor int }
+type docsView struct{ listCursor }
 
 func (docsView) name() string        { return "Docs" }
 func (docsView) badge(*snapshot) int { return 0 }
@@ -79,18 +80,18 @@ func (v *docsView) render(ws *workspace, w, h int) string {
 	s := &ws.snap
 	var rows []string
 	for _, ph := range s.phases {
-		mark, label := sMuted.Render("○"), "phase"
+		mark, label := sMuted.Render("○"), sMuted.Render("phase")
 		if ph == s.project.ActivePhase {
-			mark, label = sOK.Render("●"), "phase (active)"
+			mark, label = sOK.Render("●"), sOK.Render("phase · active")
 		}
-		rows = append(rows, fmt.Sprintf("%s %-48s %s", mark, trunc(ph, 48), sMuted.Render(label)))
+		rows = append(rows, fmt.Sprintf("%s ⎇ %-46s %s", mark, trunc(ph, 46), label))
 	}
 	for _, d := range s.docs {
 		flag := d.Change
 		if flag == "" {
 			flag = " "
 		}
-		rows = append(rows, fmt.Sprintf("%s %-48s scanned %s", sWarn.Render(flag), trunc(d.Path, 48), d.ScannedAt.Format("01-02 15:04")))
+		rows = append(rows, fmt.Sprintf("%s %-48s %s", docChangeStyle(flag).Render(flag), trunc(d.Path, 48), sMuted.Render("scanned "+d.ScannedAt.Format("01-02 15:04"))))
 	}
 	for _, t := range s.third {
 		rows = append(rows, fmt.Sprintf("%s %-30s %s", sAccent.Render("3rd/"+t.Type), trunc(t.Title, 30), sMuted.Render(trunc(t.URL, 50))))
@@ -106,6 +107,19 @@ func (v *docsView) render(ws *workspace, w, h int) string {
 		"Questions, features and tickets are per phase. Agents already running keep going.\n" +
 		"A added · M modified · D deleted since the previous scan.")
 	return listDetail(header, rows, v.cursor, w, h, detail)
+}
+
+// docChangeStyle colours the A/M/D change flag of a scanned doc.
+func docChangeStyle(flag string) lipgloss.Style {
+	switch flag {
+	case "A":
+		return sOK
+	case "M":
+		return sWarn
+	case "D":
+		return sErr
+	}
+	return sMuted
 }
 
 const thirdDocTemplate = `type: link

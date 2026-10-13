@@ -1,13 +1,17 @@
 package tui
 
 import (
+	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"docket/internal/project"
+	"docket/internal/sh"
 	"docket/internal/store"
 )
 
@@ -22,6 +26,7 @@ var formFields = []struct{ label, def string }{
 	{"Name", ""}, {"Description", ""}, {"GitHub repo", ""}, {"Local path", ""}, {"Docs repo", ""}, {"Docs phase", ""},
 	{"Base branch", "develop"}, {"PR target", "develop"}, {"Max agents", "3"},
 	{"Model techlead", "opus"}, {"Model developer", "sonnet"}, {"Model tester", "sonnet"},
+	{"Auto merge (y/n)", "n"},
 }
 
 // projectForm is the "New project" screen.
@@ -32,7 +37,8 @@ type projectForm struct {
 	err    string
 }
 
-func newProjectForm() *projectForm {
+// newProjectForm builds the form, prefilled from dir (see prefill).
+func newProjectForm(dir string) *projectForm {
 	f := &projectForm{}
 	for _, fd := range formFields {
 		ti := textinput.New()
@@ -41,8 +47,26 @@ func newProjectForm() *projectForm {
 		ti.CharLimit = 300
 		f.inputs = append(f.inputs, ti)
 	}
+	f.prefill(dir)
 	f.inputs[0].Focus()
 	return f
+}
+
+// prefill uses dir (where docket was started, or `docket <path>`): Local path
+// always (the repo root when inside a git checkout), plus Name and GitHub repo from git.
+func (f *projectForm) prefill(dir string) {
+	dir, err := filepath.Abs(dir)
+	if err != nil || dir == "" {
+		return
+	}
+	if root, err := sh.RunTimeout(5*time.Second, dir, "git", "rev-parse", "--show-toplevel"); err == nil {
+		dir = root
+		f.inputs[0].SetValue(filepath.Base(root))
+	}
+	f.inputs[3].SetValue(dir)
+	if url, err := sh.RunTimeout(5*time.Second, dir, "git", "remote", "get-url", "origin"); err == nil {
+		f.inputs[2].SetValue(url)
+	}
 }
 
 func (f *projectForm) init() tea.Cmd { return textinput.Blink }
@@ -56,6 +80,7 @@ func (f *projectForm) submit() tea.Cmd {
 		s.MaxParallelAgents = n
 	}
 	s.Models = map[string]string{"techlead": f.val(9), "developer": f.val(10), "tester": f.val(11)}
+	s.AutoMerge = strings.HasPrefix(strings.ToLower(f.val(12)), "y")
 	in := project.Input{Name: f.val(0), Description: f.val(1), RepoURL: f.val(2), LocalPath: f.val(3),
 		DocsRepoURL: f.val(4), Phase: f.val(5), Settings: s}
 	f.busy, f.err = true, ""
@@ -94,6 +119,15 @@ func (f *projectForm) update(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
+// click focuses the clicked field.
+func (f *projectForm) click(m tea.MouseMsg) tea.Cmd {
+	kind, arg := hit(m)
+	if i := zoneIndex(arg); kind == "field" && i >= 0 && !f.busy {
+		return f.setFocus(i)
+	}
+	return nil
+}
+
 func (f *projectForm) setFocus(i int) tea.Cmd {
 	n := len(f.inputs)
 	f.inputs[f.focus].Blur()
@@ -103,24 +137,24 @@ func (f *projectForm) setFocus(i int) tea.Cmd {
 
 func (f *projectForm) view(w, h int) string {
 	var b strings.Builder
-	b.WriteString(sTitle.Render("New project") + "\n\n")
+	b.WriteString(section("NEW PROJECT", fmt.Sprintf("field %d/%d", f.focus+1, len(formFields)), w-8) + "\n\n")
 	for i, fd := range formFields {
-		label := sMuted.Render(padRight(fd.label, 16))
+		label, bar := sMuted.Render(padRight(fd.label, 16)), "  "
 		if i == f.focus {
-			label = sAccent.Render(padRight(fd.label, 16))
+			label, bar = sAccent.Bold(true).Render(padRight(fd.label, 16)), sAccent.Render("▌ ")
 		}
-		f.inputs[i].Width = w - 26
-		b.WriteString(label + " [ " + f.inputs[i].View() + " ]\n")
+		f.inputs[i].Width = w - 28
+		b.WriteString(mark(fmt.Sprintf("field:%d", i), bar+label+sRule.Render("│ ")+f.inputs[i].View()) + "\n")
 	}
 	b.WriteString("\n" + sMuted.Render("Local path is cloned from GitHub repo when it does not exist. Docs phase = docs branch (empty: default branch).") + "\n")
 	switch {
 	case f.busy:
-		b.WriteString(sAccent.Render("Creating project: cloning repos, preparing .docket/ …") + "\n")
+		b.WriteString(sAccent.Render(spin(frame)+" Creating project: cloning repos, preparing .docket/ …") + "\n")
 	case f.err != "":
-		b.WriteString(sErr.Render(trunc(f.err, w-6)) + "\n")
+		b.WriteString(sErr.Render(trunc("✗ "+f.err, w-6)) + "\n")
 	}
-	b.WriteString("\n" + sMuted.Render("Tab next field · Ctrl-S create · Esc cancel"))
-	return sFrame.Width(w-2).Height(h-2).Padding(0, 2).Render(b.String())
+	b.WriteString("\n" + keyHints("Tab next field · Ctrl-S create · Esc cancel", w-8))
+	return sFrame.Width(w-2).Height(h-2).Padding(1, 3).Render(b.String())
 }
 
 func padRight(s string, n int) string {

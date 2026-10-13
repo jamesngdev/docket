@@ -14,13 +14,35 @@ layout is responsive (sidebar collapses to icons under 100 cols).
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Header:** project name, active phase (docs branch), agent slots used, dependency health (`gh`, `docker`, `tmux`, `claude`, `codegraph`) and daemon state (`daemon ✓` / `daemon ✗`).
+- **Header:** project name, active phase (docs branch), agent activity (spinner + `N running · dev x/y`, or `○ idle`) and Claude subscription usage as mini gauges (`5h ▰▰▱▱▱ 34%  7d ▱▱▱▱▱ 2%`). Dependency/daemon state appears only when something is wrong (`✗ missing docker`, `✗ daemon down`). The Dashboard has a **CLAUDE USAGE** block: a smooth heat-coloured bar (green → amber → red) per limit window (session 5h, weekly, weekly opus/sonnet when present) with reset countdown; bars ease toward new values (100ms animation tick, separate from the 2s data tick). Usage comes from the Anthropic OAuth usage API, polled at most once every 5 minutes (shared across projects; on errors such as HTTP 429 the last values stay on screen), using `docket token`'s token if set, else the user's Claude Code login (read-only — never refreshes the token).
 - **Sidebar:** `Dashboard` `Questions` `Features` `Tickets` `Agents` `Docs`. Badges show counts needing attention
   (open questions, unapproved items, running agents). `Tab`/`Shift-Tab` or `1`–`6` switch views. The sidebar never
   takes focus, so `h`/`l` are free for the view (ticket status filter).
 - **`n` (global):** runs the next pipeline step shown in the status bar (scan docs, run TechLead, jump to the gate).
 - **Status bar:** left = `:` command line (vim style); right = context keys for the focused widget.
 - **Modals** (confirm, forms, textarea) overlay the main pane; `Esc` closes.
+
+## Visual language & animation
+
+- **Theme** (`internal/tui/styles.go`, `widgets.go`): adaptive light/dark palette; every pane opens with a `section()` header
+  (`TITLE  meta ─────`); the selected list row is a full-width highlight band; statuses share one icon + colour mapping
+  (`statusIcon` / `statusStyle`); key hints render with the key in bold accent; the next pipeline step is an accent pill (`n ▶ …`).
+- **Animation** (`anim.go`): a 100ms `animMsg` tick advances a global `frame`, separate from the 2s data tick. Effects:
+  shimmer sweep over the logo/wordmark, braille spinner for anything running (agents, TechLead step, usage refresh,
+  project creation/opening), pulse on items waiting for the user, a sidebar marker that glides to the active view,
+  usage bars that ease to their value, and toasts that fade to muted then disappear after 8s.
+
+## Mouse
+
+Mouse is on (`tea.WithMouseCellMotion`); clickable regions are tracked with bubblezone (`internal/tui/mouse.go`):
+`mark(id, s)` wraps a rendered element, `app.View` runs `zone.Scan`, clicks resolve back to the id.
+
+- Wheel scrolls the focused list / form (sent as ↑/↓ keys).
+- Click a sidebar item to switch view; click a list row to select it, click it again to open (= Enter).
+- Click a ticket filter tab, a dashboard board legend entry (jumps to Tickets filtered by that status), or the `▶` next-step button.
+- Every key hint in the status bar / sidebar footer / forms is a button that presses its key.
+- Project picker: click to select, again to open. New-project form: click a field to focus it.
+- Text selection with the mouse needs Shift (most terminals) or Option (iTerm2/Terminal.app) held while dragging.
 
 ## Global keymap
 
@@ -135,7 +157,7 @@ Stepper states: `✓` done, `●` current gate (needs user), `◐` agent running
 - Detail pane is structured: SOURCE (one bullet per `;`-separated item), QUESTION (inline options `(A)`, `(B)`…
   each on its own line, "Đề xuất/Recommend" highlighted), ANSWER.
 - `c` opens a live chat with an **Advisor** agent about the selected question (interactive `claude` in tmux,
-  isolated home, skill `explain-question`, context QUESTION.md + PROJECT.md). The TUI attaches; `Ctrl-b d`
+  isolated home, skill `explain-question`, context QUESTION.md + PROJECT.md). The TUI attaches; `Ctrl-D`
   returns and keeps the chat alive (💬 marker); `c` again resumes it; `X` ends it. When asked, the advisor
   records the decision with `docket question answer <id> --text …`.
 - When all are answered/skipped, status bar shows `▶ Enter: run TechLead (analyse code → features)`.
@@ -235,7 +257,7 @@ List + detail. `h`/`l` cycles the status filter.
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`Enter` suspends the TUI and runs `tmux attach -t <session>`; detaching (`Ctrl-b d`) returns to the TUI.
+`Enter` suspends the TUI and runs `tmux attach -t <session>`; detaching (`Ctrl-D`, bound only in docket sessions via their own tmux key table) returns to the TUI.
 
 ## 7. Docs
 

@@ -5,5 +5,5 @@ package skills
 
 import "embed"
 
-//go:embed manifest.yaml common techlead developer tester advisor
+//go:embed manifest.yaml common techlead developer tester advisor support
 var FS embed.FS

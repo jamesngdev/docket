@@ -21,6 +21,7 @@ func (d *Daemon) pollPRs() {
 	}
 	all, _ := d.db.AllTickets()
 	merged := false
+	var ready []store.Ticket // approved + mergeable: candidates for auto-merge
 	for _, t := range all {
 		if t.Status != store.TWaitReview || t.PRURL == "" || t.LockedBy != "" {
 			continue // an agent is still working on it; poll again later
@@ -42,8 +43,12 @@ func (d *Daemon) pollPRs() {
 			}
 		case "OPEN":
 			d.handleMergeable(p, t, all, mergeable)
+			if mergeable == "MERGEABLE" && mergeReady(t) && time.Since(time.Unix(t.MergeCheckedAt, 0)) >= mergeRecheck {
+				ready = append(ready, t)
+			}
 		}
 	}
+	d.startAutoMerge(p, ready)
 	if merged {
 		// The base branch moved: re-check the other PRs soon (GitHub needs a few
 		// seconds to recompute mergeability, so not on this very tick).

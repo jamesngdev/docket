@@ -20,6 +20,7 @@ For multi-line text, write it to a temp file and pass the `--*-file <path>` vari
 - `docket ticket outdated <id>`
 - `docket ticket update <id> [--title] [--requirements-file] [--acceptance-file] [--depends]` (not for done tickets)
 - `docket ticket redo <id> --reason-file why.md` (rework an in-flight ticket on its branch)
+- `docket ticket merge <id>` (auto-merge only: squash-merge a Tester-approved PR) · `docket ticket flag <id> --reason "..."` (needs the user)
 
 ## Write (Developer)
 - `docket ticket status <id> wait_review --pr <url>` — after the PR is open.

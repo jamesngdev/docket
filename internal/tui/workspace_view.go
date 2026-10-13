@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -11,7 +12,10 @@ import (
 	"docket/internal/store"
 )
 
-const sidebarW = 15
+const sidebarW = 17
+
+// viewIcons are the sidebar glyphs, in workspace.views order.
+var viewIcons = []string{"◆", "?", "✦", "▤", "◉", "≡"}
 
 func (ws *workspace) view(w, h int) string {
 	header := ws.header(w)
@@ -28,7 +32,7 @@ func (ws *workspace) view(w, h int) string {
 		main = ws.views[ws.active].render(ws, mainW, bodyH)
 	}
 	side := lipgloss.NewStyle().Width(sidebarW).Height(bodyH).Render(ws.sidebar())
-	sep := sMuted.Render(strings.Repeat("│\n", max(bodyH-1, 0)) + "│")
+	sep := sRule.Render(strings.Repeat("│\n", max(bodyH-1, 0)) + "│")
 	body := lipgloss.JoinHorizontal(lipgloss.Top, side, sep, " ", lipgloss.NewStyle().Width(mainW).Height(bodyH).MaxHeight(bodyH).Render(main))
 	return sFrame.Width(w - 2).Render(lipgloss.JoinVertical(lipgloss.Left, header, body, status))
 }
@@ -44,52 +48,78 @@ func (ws *workspace) header(w int) string {
 			}
 		}
 	}
-	d := sOK.Render("daemon ✓")
+	left := shimmer(" ◆ docket ", sTitle) + " " + sBold.Render(s.project.Name) + " " + pill("⎇ "+orDash(s.project.ActivePhase), colAccent, colSelBg)
+	agents := sMuted.Render(fmt.Sprintf("○ idle · dev 0/%d", s.project.Settings.MaxParallelAgents))
+	if running > 0 {
+		agents = sAccent.Render(spin(frame)+fmt.Sprintf(" %d running", running)) +
+			sMuted.Render(fmt.Sprintf(" · dev %d/%d", devs, s.project.Settings.MaxParallelAgents))
+	}
+	right := []string{agents}
+	if s.project.Settings.AutoMerge {
+		right = append(right, sOK.Render("⇢ auto-merge"))
+	}
+	if s.discord {
+		right = append(right, sInfo.Render("◉ discord"))
+	}
+	if u := ws.usageBrief(); u != "" {
+		right = append(right, u)
+	}
+	if ws.missing != "" {
+		right = append(right, ws.missing)
+	}
 	if !s.daemonUp {
-		d = sErr.Render("daemon ✗")
+		right = append(right, sErr.Render(pulse("✗", "·")+" daemon down"))
 	}
-	left := sTitle.Render(" docket ") + "─ " + sBold.Render(s.project.Name) + sMuted.Render(" · phase ") + sAccent.Render(s.project.ActivePhase)
-	right := fmt.Sprintf("agents %d (dev %d/%d)  %s  %s ", running, devs, s.project.Settings.MaxParallelAgents, ws.health, d)
-	gap := w - 4 - ansi.StringWidth(left) - ansi.StringWidth(right)
+	r := strings.Join(right, sRule.Render("  │  ")) + " "
+	gap := w - 2 - ansi.StringWidth(left) - ansi.StringWidth(r)
 	if gap < 1 {
-		return trunc(left+" "+right, w-4)
+		return trunc(left+" "+r, w-2)
 	}
-	return left + strings.Repeat(" ", gap) + right
+	return left + strings.Repeat(" ", gap) + r
 }
 
+// sidebar lists the views; a marker glides to the active one when switching.
 func (ws *workspace) sidebar() string {
+	marker := int(math.Round(ws.sideY))
 	var b strings.Builder
+	b.WriteString("\n")
 	for i, v := range ws.views {
-		label := fmt.Sprintf("%d %s", i+1, v.name())
+		label := fmt.Sprintf("%s %s", viewIcons[i], v.name())
+		badge := ""
 		if n := v.badge(&ws.snap); n > 0 {
-			label = fmt.Sprintf("%-11s%s", label, sWarn.Render(fmt.Sprint(n)))
+			badge = fmt.Sprint(n)
 		}
+		bar := " "
+		if i == marker {
+			bar = sAccent.Render("▌")
+		}
+		row := bar + sMuted.Render(fmt.Sprintf(" %-*s", sidebarW-4, label)) + sWarn.Bold(true).Render(badge)
 		if i == ws.active {
-			b.WriteString(sSelected.Render("▸ "+label) + "\n")
-		} else {
-			b.WriteString("  " + label + "\n")
+			row = bar + sSelRow.Width(sidebarW-2).Render(fmt.Sprintf(" %-*s%s", sidebarW-4, label, badge))
 		}
+		b.WriteString(mark(fmt.Sprintf("view:%d", i), row) + "\n")
+	}
+	b.WriteString("\n" + sRule.Render(" "+strings.Repeat("─", sidebarW-3)) + "\n")
+	for _, k := range []string{"? help", ": command", "q projects"} {
+		key, _, _ := strings.Cut(k, " ")
+		b.WriteString(mark("key:"+key, sMuted.Render(" "+k)) + "\n")
 	}
 	return b.String()
 }
 
 func (ws *workspace) statusBar(w int) string {
-	sep := sMuted.Render(strings.Repeat("─", w-4))
+	sep := sRule.Render(strings.Repeat("─", w-2))
 	if ws.cmdMode {
 		return sep + "\n" + ws.cmdline.View()
 	}
 	label, _ := nextStep(ws)
-	hint := ws.views[ws.active].hints() + " · n " + label + " · : cmd · ? help · q projects"
+	cta := mark("cta:bar", pill("n ▶ "+trunc(label, 40), colOnAcc, colAccent))
+	line := cta + "  " + keyHints(ws.views[ws.active].hints(), w-6-ansi.StringWidth(cta))
 	if ws.editor != nil {
-		hint = "-- INSERT --  Ctrl-S save · Esc cancel"
+		line = pill("INSERT", colOnAcc, colOK) + "  " + keyHints("Ctrl-S save · Esc cancel", w-14)
 	}
-	line := sMuted.Render(trunc(hint, w-4))
-	if ws.flash.text != "" {
-		st := sOK
-		if ws.flash.err {
-			st = sErr
-		}
-		line = st.Render(trunc(ws.flash.text, w-4)) + "\n" + line
+	if t := toast(ws.flash, w-4); t != "" {
+		line = " " + t + "\n" + line
 	}
 	if ws.snap.err != nil {
 		line = sErr.Render(trunc("db: "+ws.snap.err.Error(), w-4)) + "\n" + line
@@ -98,7 +128,7 @@ func (ws *workspace) statusBar(w int) string {
 }
 
 func helpText() string {
-	return sTitle.Render("Keys") + `
+	return section("KEYS", "press any key to close", 70) + `
 
   Tab / Shift-Tab / 1-6   switch view
   j k  g G                move · top · bottom
@@ -114,7 +144,7 @@ func helpText() string {
   o  L                    open PR in browser · open agent log
   n                       run the next pipeline step
   :                       command (:phase <branch> :rescan :dispatch :techlead <task> :compose :daemon stop :project :q)
-  q                       back to projects · Ctrl-C quit
-
-press any key to close`
+  :automerge on|off       TechLead reviews and squash-merges Tester-approved PRs
+  :discord <id>|off       Backend Support answers @mentions in this Discord channel (token: docket discord set-token)
+  q                       back to projects · Ctrl-C quit`
 }

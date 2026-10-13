@@ -5,14 +5,32 @@
 package tui
 
 import (
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	zone "github.com/lrstanley/bubblezone"
+
+	"docket/internal/config"
+	"docket/internal/project"
 )
 
-// Run starts the TUI on the alternate screen.
-func Run() error {
-	_, err := tea.NewProgram(newApp(), tea.WithAltScreen()).Run()
+// Run starts the TUI on the alternate screen with mouse support. With a
+// path it skips the project picker: it opens the docket project containing
+// path (registering it if needed), or the new-project form prefilled for it.
+func Run(path string) error {
+	zone.NewGlobal()
+	defer zone.Close()
+	a := newApp()
+	if path != "" {
+		if repo, err := project.Find(path); err == nil {
+			_ = config.AddProject(repo) // so the picker lists it next time
+			a.start = func() tea.Msg { return openProjectMsg{repo: repo} }
+		} else {
+			a.form, a.screen = newProjectForm(path), scrForm
+		}
+	}
+	_, err := tea.NewProgram(a, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
@@ -35,6 +53,7 @@ type (
 	flashMsg struct {
 		text string
 		err  bool
+		at   time.Time // set when received; drives the toast fade
 	}
 )
 
@@ -57,13 +76,20 @@ type app struct {
 	picker *picker
 	form   *projectForm
 	main   *workspace
+	start  tea.Cmd // first action when launched as `docket <path>`
 }
 
 func newApp() *app {
 	return &app{screen: scrPicker, picker: newPicker()}
 }
 
-func (a *app) Init() tea.Cmd { return tea.Batch(a.picker.load(), tick()) }
+func (a *app) Init() tea.Cmd {
+	cmds := []tea.Cmd{a.picker.load(), tick(), animate(), a.start}
+	if a.form != nil {
+		cmds = append(cmds, a.form.init())
+	}
+	return tea.Batch(cmds...)
+}
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -90,22 +116,44 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.picker.err = ""
 		a.closeMain()
 		a.main, a.screen = msg.ws, scrMain
-		return a, msg.ws.load()
+		return a, tea.Batch(msg.ws.load(), msg.ws.refreshUsage())
 	case toPickerMsg:
 		a.closeMain()
 		a.screen = scrPicker
 		return a, a.picker.load()
 	case newProjectMsg:
-		a.form, a.screen = newProjectForm(), scrForm
+		cwd, _ := os.Getwd()
+		a.form, a.screen = newProjectForm(cwd), scrForm
 		return a, a.form.init()
 	case cancelFormMsg:
 		a.screen = scrPicker
 		return a, nil
+	case tea.MouseMsg:
+		if k, ok := mouseKey(msg); ok {
+			return a.Update(k)
+		}
+		if !leftClick(msg) {
+			return a, nil
+		}
+		switch a.screen {
+		case scrPicker:
+			return a, a.picker.click(msg)
+		case scrForm:
+			return a, a.form.click(msg)
+		default:
+			return a, a.main.click(msg)
+		}
+	case animMsg:
+		frame++
+		if a.screen == scrMain {
+			a.main.animate()
+		}
+		return a, animate()
 	case tickMsg:
 		var cmd tea.Cmd
 		switch a.screen {
 		case scrMain:
-			cmd = a.main.load()
+			cmd = tea.Batch(a.main.load(), a.main.refreshUsage())
 		case scrPicker:
 			cmd = a.picker.load()
 		}
@@ -125,14 +173,17 @@ func (a *app) View() string {
 	if a.w == 0 {
 		return "loading…"
 	}
+	zoneIDs = zoneIDs[:0]
+	var out string
 	switch a.screen {
 	case scrPicker:
-		return a.picker.view(a.w, a.h)
+		out = a.picker.view(a.w, a.h)
 	case scrForm:
-		return a.form.view(a.w, a.h)
+		out = a.form.view(a.w, a.h)
 	default:
-		return a.main.view(a.w, a.h)
+		out = a.main.view(a.w, a.h)
 	}
+	return zone.Scan(out)
 }
 
 func (a *app) closeMain() {

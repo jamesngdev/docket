@@ -11,6 +11,7 @@ techlead:
   - generate-tickets
   - ticket-chat # interactive ticket chat (key c in the Tickets view)
   - create-ticket # interactive "new ticket" chat (key N in the Tickets view)
+  - merge-prs # auto-merge: decide on Tester-approved PRs
 developer:
   - docket-cli
   - codegraph-usage
@@ -22,6 +23,8 @@ advisor: # interactive chat that explains one question (key c in the Questions v
   - docket-cli
   - codegraph-usage
   - explain-question
+support: # read-only Backend Support answering @mentions in the project's Discord channel
+  - answer-discord
 tester:
   - docket-cli
   - codegraph-usage

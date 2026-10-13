@@ -34,16 +34,17 @@ type Ticket struct {
 	ChangeRequest                   string // why TechLead asked to redo the ticket (ticket chat)
 	PRConflict                      bool   // GitHub reports the PR as CONFLICTING with its base
 	ConflictAttempts                int    // auto-resolve runs since the PR was last mergeable
+	MergeCheckedAt                  int64  // unix time TechLead last got this PR for an auto-merge decision
 }
 
 const ticketCols = `id,feature_id,title,requirements,acceptance,depends_on,status,branch,pr_url,locked_by,
-	review_state,review_summary,review_rounds,needs_user,phase,change_request,pr_conflict,conflict_attempts`
+	review_state,review_summary,review_rounds,needs_user,phase,change_request,pr_conflict,conflict_attempts,merge_checked_at`
 
 func scanTicket(s interface{ Scan(...any) error }) (Ticket, error) {
 	var t Ticket
 	var deps string
 	err := s.Scan(&t.ID, &t.FeatureID, &t.Title, &t.Requirements, &t.Acceptance, &deps, &t.Status, &t.Branch,
-		&t.PRURL, &t.LockedBy, &t.ReviewState, &t.ReviewSummary, &t.ReviewRounds, &t.NeedsUser, &t.Phase, &t.ChangeRequest, &t.PRConflict, &t.ConflictAttempts)
+		&t.PRURL, &t.LockedBy, &t.ReviewState, &t.ReviewSummary, &t.ReviewRounds, &t.NeedsUser, &t.Phase, &t.ChangeRequest, &t.PRConflict, &t.ConflictAttempts, &t.MergeCheckedAt)
 	t.DependsOn = ParseIDs(deps)
 	return t, err
 }

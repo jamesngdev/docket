@@ -76,9 +76,23 @@ func Capture(name string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
+// keyTable is the tmux key table docket sessions use instead of "root".
+const keyTable = "docket"
+
+// detachOnCtrlD makes Ctrl-D detach from this session without the prefix.
+// It is scoped to docket sessions through their own key table: keys not bound
+// there still reach the pane, the prefix still works, and the user's other
+// tmux sessions keep their normal bindings.
+func detachOnCtrlD(name string) {
+	_ = exec.Command("tmux", "bind-key", "-T", keyTable, "C-d", "detach-client").Run()
+	_ = exec.Command("tmux", "set-option", "-t", "="+name+":", "key-table", keyTable).Run()
+	_ = exec.Command("tmux", "set-option", "-t", "="+name+":", "status-right", " Ctrl-D: back to docket ").Run()
+}
+
 // AttachCmd builds the command the TUI hands to tea.ExecProcess. TMUX is
 // cleared so attaching also works when docket itself runs inside tmux.
 func AttachCmd(name string) *exec.Cmd {
+	detachOnCtrlD(name)
 	c := exec.Command("tmux", "attach-session", "-t", "="+name)
 	c.Env = append(os.Environ(), "TMUX=")
 	return c

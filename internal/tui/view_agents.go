@@ -10,7 +10,7 @@ import (
 	"docket/internal/store"
 )
 
-type agentsView struct{ cursor int }
+type agentsView struct{ listCursor }
 
 func (agentsView) name() string { return "Agents" }
 func (agentsView) badge(s *snapshot) int {
@@ -23,7 +23,7 @@ func (agentsView) badge(s *snapshot) int {
 	return n
 }
 func (agentsView) hints() string {
-	return "Enter attach (tmux, Ctrl-b d to return) · x stop · r restart · L log"
+	return "Enter attach (tmux, Ctrl-D to return) · x stop · r restart · L log"
 }
 
 // selectedSession is the running session whose pane is previewed.
@@ -78,15 +78,20 @@ func (v *agentsView) render(ws *workspace, w, h int) string {
 			end = r.EndedAt
 		}
 		dur := end.Sub(r.StartedAt).Round(time.Minute)
-		rows = append(rows, fmt.Sprintf("%s %-22s %-10s %-30s %6s  %s", statusIcon(r.Status), r.ID, r.Role, trunc(what, 30),
+		rows = append(rows, fmt.Sprintf("%s %-22s %s %-30s %6s  %s", statusIcon(r.Status), r.ID, actorStyle(r.Role).Render(fmt.Sprintf("%-10s", r.Role)), trunc(what, 30),
 			fmtDur(dur), sMuted.Render(r.Session+" "+r.Summary)))
 	}
 	detail := ""
 	if len(runs) > 0 {
 		r := runs[v.cursor]
-		detail = fmt.Sprintf("%s · %s · %s\nworkdir %s\n", r.ID, r.Role, r.Status, r.Workdir)
+		detail = fmt.Sprintf("%s  %s  %s %s\n%s\n", sAccent.Bold(true).Render(r.ID), actorStyle(r.Role).Render(r.Role), statusIcon(r.Status),
+			statusStyle(r.Status).Render(r.Status), sMuted.Render("workdir "+r.Workdir))
 		if ws.snap.pane != "" {
-			detail += "\n" + sMuted.Render("last lines of pane:") + "\n" + ws.snap.pane
+			live := sMuted.Render("pane")
+			if r.Status == store.RunRunning {
+				live = sAccent.Render(spin(frame) + " live pane")
+			}
+			detail += "\n" + live + "\n" + ws.snap.pane
 		}
 	}
 	return listDetail(fmt.Sprintf("AGENTS   running %d · history %d", v.badge(&ws.snap), len(runs)), rows, v.cursor, w, h, detail)

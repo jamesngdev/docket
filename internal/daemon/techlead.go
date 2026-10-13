@@ -64,9 +64,12 @@ func (d *Daemon) startTechlead(task string) error {
 	earlier, _ := d.db.FeatureTitlesOutsidePhase()
 	in := agent.TechleadInput{Project: p, Task: task, Docs: docs, EarlierFeatures: earlier, PrevCommit: p.PrevDocsCommit, DocsHead: p.DocsCommit,
 		Questions: qs, Features: fs, Tickets: ts}
-	if err := agent.WriteFiles(ctxDir, map[string]string{
-		"PROJECT.md": agent.ProjectMarkdown(in), "3TH_DOCUMENT.md": agent.ThirdDocsMarkdown(third),
-	}); err != nil {
+	files := map[string]string{"PROJECT.md": agent.ProjectMarkdown(in), "3TH_DOCUMENT.md": agent.ThirdDocsMarkdown(third)}
+	if task == agent.TaskMerge {
+		all, _ := d.db.AllTickets() // PRs of every phase can be ready
+		files["MERGE.md"] = mergeMarkdown(p, all)
+	}
+	if err := agent.WriteFiles(ctxDir, files); err != nil {
 		return err
 	}
 	return d.launch(p, agent.RoleTechLead, task, runID, 0, p.RepoPath)
@@ -75,7 +78,7 @@ func (d *Daemon) startTechlead(task string) error {
 // gateCheck enforces the user approval gates before TechLead moves on.
 func gateCheck(task string, qs []store.Question, fs []store.Feature) error {
 	switch task {
-	case agent.TaskBootstrap, agent.TaskDocDiff:
+	case agent.TaskBootstrap, agent.TaskDocDiff, agent.TaskMerge:
 		return nil
 	case agent.TaskFeatures:
 		for _, q := range qs {

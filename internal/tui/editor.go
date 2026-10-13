@@ -47,5 +47,5 @@ func (e *editor) update(ws *workspace, msg tea.Msg) tea.Cmd {
 func (e *editor) view(w, h int) string {
 	e.ta.SetWidth(w - 4)
 	e.ta.SetHeight(max(h-5, 3))
-	return sModal.Width(w - 2).Render(sTitle.Render(e.title) + "\n" + e.ta.View())
+	return sModal.Width(w - 2).Render(section("✎ "+e.title, "", w-6) + "\n" + e.ta.View())
 }

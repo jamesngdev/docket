@@ -26,7 +26,8 @@ var phaseColumns = map[string][]string{
 	"questions": {"phase TEXT NOT NULL DEFAULT ''"},
 	"features":  {"phase TEXT NOT NULL DEFAULT ''"},
 	"tickets": {"phase TEXT NOT NULL DEFAULT ''", "change_request TEXT NOT NULL DEFAULT ''",
-		"pr_conflict INTEGER NOT NULL DEFAULT 0", "conflict_attempts INTEGER NOT NULL DEFAULT 0"},
+		"pr_conflict INTEGER NOT NULL DEFAULT 0", "conflict_attempts INTEGER NOT NULL DEFAULT 0",
+		"merge_checked_at INTEGER NOT NULL DEFAULT 0"},
 }
 
 // activePhaseSQL is used as a sub-select to scope queries/inserts to the active phase.

@@ -13,8 +13,10 @@ import (
 )
 
 type Config struct {
-	OAuthToken string   `yaml:"oauth_token,omitempty"`
-	Projects   []string `yaml:"projects"`
+	OAuthToken string `yaml:"oauth_token,omitempty"`
+	// DiscordToken is the bot token shared by every project's Backend Support.
+	DiscordToken string   `yaml:"discord_token,omitempty"`
+	Projects     []string `yaml:"projects"`
 	// TeamSkillRepos are git repos of team skills pulled before every Developer
 	// and TechLead run. Unset = extskills.DefaultRepos; [] = none.
 	TeamSkillRepos *[]string `yaml:"team_skill_repos,omitempty"`
@@ -87,6 +89,16 @@ func RemoveProject(repo string) error {
 		return err
 	}
 	c.Projects = slices.DeleteFunc(c.Projects, func(p string) bool { return p == repo })
+	return Save(c)
+}
+
+// SetDiscordToken stores (or clears, when empty) the Discord bot token.
+func SetDiscordToken(tok string) error {
+	c, err := Load()
+	if err != nil {
+		return err
+	}
+	c.DiscordToken = tok
 	return Save(c)
 }
 

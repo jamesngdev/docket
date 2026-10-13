@@ -15,7 +15,8 @@ import (
 var ticketFilters = []string{"all", store.TBacklog, store.TPending, store.TProcessing, store.TWaitReview, store.TDone, store.TOutdated}
 
 type ticketsView struct {
-	cursor, filter int
+	listCursor
+	filter int
 }
 
 func (ticketsView) name() string { return "Tickets" }
@@ -46,16 +47,9 @@ func (v *ticketsView) keys(ws *workspace, k tea.KeyMsg) tea.Cmd {
 	key := k.String()
 	switch key {
 	case "h", "left":
-		v.filter = (v.filter + len(ticketFilters) - 1) % len(ticketFilters)
-		return nil
+		return v.setFilter(ws, (v.filter+len(ticketFilters)-1)%len(ticketFilters))
 	case "l", "right":
-		v.filter = (v.filter + 1) % len(ticketFilters)
-	}
-	if key == "h" || key == "left" || key == "l" || key == "right" {
-		if ticketFilters[v.filter] == store.TWaitReview { // looking at PRs: refresh merge/conflict state now
-			return ws.send(ipc.CmdCheckPRs, "", "checking PRs for merges and conflicts…")
-		}
-		return nil
+		return v.setFilter(ws, (v.filter+1)%len(ticketFilters))
 	}
 	ts := v.visible(&ws.snap)
 	if c, ok := moveCursor(key, v.cursor, len(ts)); ok {
@@ -133,6 +127,18 @@ func (v *ticketsView) keys(ws *workspace, k tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+// setFilter switches the status filter (keys h/l or a click on a tab).
+func (v *ticketsView) setFilter(ws *workspace, i int) tea.Cmd {
+	if i < 0 || i >= len(ticketFilters) {
+		return nil
+	}
+	v.filter = i
+	if ticketFilters[i] == store.TWaitReview { // looking at PRs: refresh merge/conflict state now
+		return ws.send(ipc.CmdCheckPRs, "", "checking PRs for merges and conflicts…")
+	}
+	return nil
+}
+
 // approveTicket: backlog → pending; on a flagged ticket clear the flag so the
 // daemon resumes (review loop gets a fresh round budget).
 func approveTicket(db *store.DB, t store.Ticket) error {
@@ -157,11 +163,11 @@ func (v *ticketsView) render(ws *workspace, w, h int) string {
 	v.cursor = clampCursor(v.cursor, len(ts))
 	var tabs []string
 	for i, f := range ticketFilters {
+		tab := sMuted.Render(" " + f + " ")
 		if i == v.filter {
-			tabs = append(tabs, sSelected.Render("["+f+"]"))
-		} else {
-			tabs = append(tabs, sMuted.Render(f))
+			tab = pill(f, colOnAcc, colAccent)
 		}
+		tabs = append(tabs, mark(fmt.Sprintf("tab:%d", i), tab))
 	}
 	var rows []string
 	for _, t := range ts {
@@ -184,13 +190,14 @@ func (v *ticketsView) render(ws *workspace, w, h int) string {
 		if ws.snap.sessions[agent.TicketSession(ws.snap.project.Slug, t.ID)] {
 			extra += sAccent.Render(" 💬")
 		}
-		rows = append(rows, fmt.Sprintf("%s #%-3d %-36s F%-3d %-11s %s", statusIcon(t.Status), t.ID, trunc(t.Title, 36), t.FeatureID, t.Status, extra))
+		rows = append(rows, fmt.Sprintf("%s %s %-36s %s %s %s", statusIcon(t.Status), sBold.Render(fmt.Sprintf("#%-3d", t.ID)), trunc(t.Title, 36),
+			sMuted.Render(fmt.Sprintf("F%-3d", t.FeatureID)), statusStyle(t.Status).Render(fmt.Sprintf("%-11s", t.Status)), extra))
 	}
 	detail := ""
 	if len(ts) > 0 {
 		detail = ticketDetail(ts[v.cursor])
 	}
-	header := "TICKETS  " + strings.Join(tabs, " ")
+	header := "TICKETS  " + strings.Join(tabs, "")
 	if ws.snap.sessions[agent.NewTicketSession(ws.snap.project.Slug)] {
 		header += sAccent.Render("   💬 new-ticket chat running (N to reopen)")
 	}
@@ -199,7 +206,7 @@ func (v *ticketsView) render(ws *workspace, w, h int) string {
 
 func ticketDetail(t store.Ticket) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#%d · %s · %s\n", t.ID, sBold.Render(t.Title), t.Status)
+	fmt.Fprintf(&b, "%s %s  %s %s\n", sAccent.Bold(true).Render(fmt.Sprintf("#%d", t.ID)), sBold.Render(t.Title), statusIcon(t.Status), statusStyle(t.Status).Render(t.Status))
 	if t.Branch != "" {
 		fmt.Fprintf(&b, "branch %s  %s\n", t.Branch, t.PRURL)
 	}
@@ -210,12 +217,12 @@ func ticketDetail(t store.Ticket) string {
 	if t.NeedsUser {
 		b.WriteString(sWarn.Render("⚠ needs you: press a to resume after checking the agent log / PR") + "\n")
 	}
-	fmt.Fprintf(&b, "\n%s\n%s\n\n%s\n%s\n", sBold.Render("REQUIREMENTS"), t.Requirements, sBold.Render("ACCEPTANCE CRITERIA"), t.Acceptance)
+	fmt.Fprintf(&b, "\n%s\n%s\n\n%s\n%s\n", sTitle.Render("REQUIREMENTS"), t.Requirements, sTitle.Render("ACCEPTANCE CRITERIA"), t.Acceptance)
 	if t.ChangeRequest != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", sBold.Render("CHANGE REQUEST (TechLead)"), t.ChangeRequest)
+		fmt.Fprintf(&b, "\n%s\n%s\n", sTitle.Render("CHANGE REQUEST (TechLead)"), t.ChangeRequest)
 	}
 	if t.ReviewSummary != "" {
-		fmt.Fprintf(&b, "\n%s\n%s\n", sBold.Render("REVIEW"), t.ReviewSummary)
+		fmt.Fprintf(&b, "\n%s\n%s\n", sTitle.Render("REVIEW"), t.ReviewSummary)
 	}
 	return b.String()
 }

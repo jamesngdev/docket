@@ -34,6 +34,7 @@ type Daemon struct {
 	lastPoll time.Time
 	stopOnce sync.Once
 	version  string // ipc.BinaryVersion at start; lets clients detect a stale daemon
+	discord  discordState
 }
 
 // Run blocks until shutdown. It is started by `docket daemon --project <repo>`.
@@ -68,6 +69,7 @@ func Run(repo string) error {
 	}
 
 	d.startQueuedTechlead()
+	defer d.closeDiscord()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -142,6 +144,7 @@ func (d *Daemon) tick() {
 	d.reviewLoop()
 	d.startTesters()
 	d.dispatch()
+	d.syncDiscord()
 	if time.Since(d.lastPoll) >= pollPREvery {
 		d.lastPoll = time.Now()
 		d.pollPRs()

@@ -13,12 +13,14 @@ type Settings struct {
 	PRTarget          string            `json:"pr_target"`
 	MaxReviewRounds   int               `json:"max_review_rounds"`
 	Models            map[string]string `json:"models"`
+	DiscordChannel    string            `json:"discord_channel,omitempty"` // Backend Support answers @mentions here
+	AutoMerge         bool              `json:"auto_merge,omitempty"`      // TechLead reviews and squash-merges approved PRs
 }
 
 func DefaultSettings() Settings {
 	return Settings{
 		MaxParallelAgents: 3, BaseBranch: "develop", PRTarget: "develop", MaxReviewRounds: 2,
-		Models: map[string]string{"techlead": "opus", "developer": "sonnet", "tester": "sonnet"},
+		Models: map[string]string{"techlead": "opus", "developer": "sonnet", "tester": "sonnet", "support": "sonnet"},
 	}
 }
 

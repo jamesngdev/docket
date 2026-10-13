@@ -9,25 +9,7 @@ import (
 	"docket/internal/store"
 )
 
-// listDetail renders a header, a scrolling list and a detail pane below it.
-func listDetail(header string, rows []string, cursor, w, h int, detail string) string {
-	var b strings.Builder
-	b.WriteString(sTitle.Render(trunc(header, w)) + "\n\n")
-	listH := max((h-3)*45/100, 3)
-	start, end := window(cursor, len(rows), listH)
-	for i := start; i < end; i++ {
-		b.WriteString(cursorLine(i == cursor, rows[i], w) + "\n")
-	}
-	if len(rows) == 0 {
-		b.WriteString(sMuted.Render("  nothing here yet") + "\n")
-	}
-	b.WriteString(sMuted.Render(strings.Repeat("─", w)) + "\n")
-	used := strings.Count(b.String(), "\n")
-	b.WriteString(strings.Join(lines(detail, w, max(h-used, 1)), "\n"))
-	return b.String()
-}
-
-type featuresView struct{ cursor int }
+type featuresView struct{ listCursor }
 
 func (featuresView) name() string { return "Features" }
 func (featuresView) badge(s *snapshot) int {
@@ -92,12 +74,14 @@ func (v *featuresView) render(ws *workspace, w, h int) string {
 	}
 	var rows []string
 	for _, f := range fs {
-		rows = append(rows, fmt.Sprintf("%s F%-3d %-44s %s", statusIcon(f.Status), f.ID, trunc(f.Title, 44), sMuted.Render(f.Status)))
+		rows = append(rows, fmt.Sprintf("%s %s %-44s %s %s", statusIcon(f.Status), sBold.Render(fmt.Sprintf("F%-3d", f.ID)), trunc(f.Title, 44),
+			statusStyle(f.Status).Render(fmt.Sprintf("%-9s", f.Status)), sMuted.Render(fmt.Sprintf("%d tickets", nTickets[f.ID]))))
 	}
 	detail := ""
 	if len(fs) > 0 {
 		f := fs[v.cursor]
-		detail = fmt.Sprintf("F%d · %s\ndocs: %s · tickets: %d\n\n%s", f.ID, sBold.Render(f.Title), f.Documents, nTickets[f.ID], f.Description)
+		detail = fmt.Sprintf("%s %s  %s %s\n%s\n\n%s", sAccent.Bold(true).Render(fmt.Sprintf("F%d", f.ID)), sBold.Render(f.Title), statusIcon(f.Status),
+			statusStyle(f.Status).Render(f.Status), sMuted.Render(fmt.Sprintf("docs: %s · tickets: %d", f.Documents, nTickets[f.ID])), f.Description)
 	}
 	return listDetail(fmt.Sprintf("FEATURES   %d draft · %d total", v.badge(&ws.snap), len(fs)), rows, v.cursor, w, h, detail)
 }
