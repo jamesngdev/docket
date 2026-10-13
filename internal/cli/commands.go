@@ -14,10 +14,13 @@ import (
 )
 
 const usage = `docket                         open the TUI
+docket <path>                  open the TUI on the project containing <path> (new-project form if none)
 docket daemon [--project P]    run the project daemon in the foreground
 docket daemon stop|status      stop / check the project daemon
 docket auth set-token <token>  optional: dedicated agent token (from 'claude setup-token'); default reuses your claude login
 docket auth clear-token        go back to reusing your claude login
+docket discord set-token <bot-token> | clear-token   Discord bot for Backend Support (all projects)
+docket discord channel <channel-id>|off | status   answer @mentions in this project's channel
 docket phase list | phase set <docs-branch>   list / switch the active phase (docs branch)
 docket show questions|features|tickets|ticket <id>
 docket question add --text T [--source S] | question answer <id> --text T
@@ -26,9 +29,24 @@ docket ticket add --feature F --title T --requirements R --acceptance A [--depen
 docket ticket outdated <id> | ticket status <id> <status> [--pr URL]
 docket ticket update <id> [--title T] [--requirements R] [--acceptance A] [--depends 1,2]
 docket ticket redo <id> --reason R          rework an in-flight ticket on its branch
+docket ticket merge <id>                    squash-merge an approved PR (TechLead, auto-merge on)
+docket ticket flag <id> --reason R          flag a ticket for the user
+docket automerge on|off|status              TechLead reviews and merges Tester-approved PRs (this project)
 docket review submit <ticket> --result approve|request_changes --summary S
 docket run done [--summary S]
+docket version                              print the installed version
 Any text flag X also accepts --X-file <path>.`
+
+// Version is stamped at release time via -ldflags "-X docket/internal/cli.Version=…".
+var Version = "dev"
+
+// commands are the subcommands Run understands; anything else may be a path.
+var commands = map[string]bool{"help": true, "--help": true, "daemon": true, "auth": true, "show": true,
+	"discord": true, "automerge": true, "phase": true, "question": true, "feature": true, "ticket": true, "review": true, "run": true,
+	"version": true, "--version": true}
+
+// IsCommand reports whether name is a docket subcommand (not a project path).
+func IsCommand(name string) bool { return commands[name] }
 
 // Run dispatches a subcommand. args excludes the program name.
 func Run(argv []string) error {
@@ -43,6 +61,9 @@ func Run(argv []string) error {
 	}
 	a := parse(rest)
 	switch cmd {
+	case "version", "--version":
+		fmt.Println("docket", Version)
+		return nil
 	case "daemon":
 		return daemonCmd(a, sub)
 	case "auth":
@@ -59,6 +80,10 @@ func Run(argv []string) error {
 		return fmt.Errorf("usage: docket auth set-token <sk-ant-…> | auth clear-token\n(no token = agents reuse your normal `claude` login)")
 	case "show":
 		return show(a, sub)
+	case "discord":
+		return discordCmd(a, sub)
+	case "automerge":
+		return autoMergeCmd(a, sub)
 	case "phase":
 		return phaseCmd(a, sub)
 	case "question", "feature", "ticket", "review", "run":

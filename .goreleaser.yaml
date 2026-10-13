@@ -1,0 +1,27 @@
+# Release builds: `git tag vX.Y.Z && git push origin vX.Y.Z` triggers .github/workflows/release.yml.
+version: 2
+
+project_name: docket
+
+builds:
+  - main: .
+    binary: docket
+    env:
+      - CGO_ENABLED=0 # sqlite is pure Go (modernc.org/sqlite)
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X docket/internal/cli.Version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude: ["^docs:", "^chore:"]

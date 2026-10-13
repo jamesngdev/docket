@@ -45,10 +45,22 @@ pull request. Everything else runs in the background.
 | `tmux` | hosts every agent session |
 | `docker` + `docker compose` | shared dev database |
 | `codegraph` | code navigation for agents (optional but recommended) |
+| Pencil.app | optional: agents read/edit `.pen` design files through the Pencil MCP (app must be open) |
 
 The TUI header shows which of these are missing.
 
 ## Install
+
+One command (macOS / Linux, amd64 / arm64) — downloads the latest release binary to `~/.local/bin/docket`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jamesngdev/docket/master/install.sh | sh
+```
+
+Pin a version or change the location with `DOCKET_VERSION=v0.1.0` / `DOCKET_INSTALL_DIR=/usr/local/bin` (set on `sh`).
+Re-run the same command to upgrade. Check with `docket version`.
+
+From source (Go 1.26.4+):
 
 ```bash
 git clone git@github.com:jamesngdev/docket.git
@@ -58,10 +70,20 @@ make install          # go install + symlink ~/.local/bin/docket
 
 Make sure `~/.local/bin` is on your `PATH`.
 
+### Releasing
+
+Push a `v*` tag; the `release` GitHub Action runs tests and publishes binaries via GoReleaser:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
 ## Quick start
 
 ```bash
-docket                # open the TUI
+docket                # open the TUI (project picker)
+docket .              # open the project in this folder directly (or the new-project form, prefilled)
+docket ~/code/my-api  # same, for any path inside a project
 ```
 
 1. Press `n` to create a project: name, GitHub repo, local checkout path, docs repo and docs phase (branch),
@@ -71,8 +93,12 @@ docket                # open the TUI
 3. Follow the Dashboard stepper (`Enter` or `n` runs the next step):
    answer questions → approve features → approve tickets.
 4. Approved tickets are dispatched to **Developers**. Watch them in **Agents**, attach with `Enter`
-   (detach with `Ctrl-b d`).
+   (detach with `Ctrl-D`).
 5. Review and merge PRs on GitHub. docket notices the merge, marks the ticket done and unblocks its dependents.
+   Or turn on **auto-merge** (`:automerge on`, `docket automerge on`, or "Auto merge: y" in the new-project form):
+   once the Tester approves a PR and GitHub reports no conflicts, a TechLead run reads the diff, CI checks and
+   acceptance criteria and then squash-merges it (deleting the branch), sends it back to the Developer, or flags it
+   for you. PRs it leaves open while CI is still running are offered again after 15 minutes.
 
 ## The TUI
 
@@ -120,10 +146,38 @@ projects:                    # registered project checkouts (managed by the TUI)
 team_skill_repos:            # skills given to Developers and TechLead, pulled on every run
   - https://github.com/jamesngdev/be-skills
 # oauth_token: sk-ant-...    # optional dedicated agent token; default reuses your `claude` login
+# discord_token: ...         # Discord bot token for Backend Support (set with `docket discord set-token`)
 ```
 
 Per-project settings (parallel agents, base/PR branch, review rounds, models) are chosen when creating the
 project and stored in its database.
+
+## Discord Connect (Backend Support)
+
+Teammates can ask a **read-only Backend Support agent** about the project from Discord. `@mention` the bot in the
+project's channel → it opens a thread and answers there; @mention it again in that thread to follow up (it
+remembers the conversation). Messages that don't mention the bot are ignored. It can read the docs, questions, features, tickets and the source code of the base
+branch — nothing else, and it never writes anything.
+
+Setup (once per machine, then once per project):
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) → New Application → **Bot** →
+   Reset Token (copy it). No privileged intents are needed.
+2. OAuth2 → URL Generator → scope `bot`, permissions *View Channels, Send Messages, Create Public Threads,
+   Send Messages in Threads, Read Message History* → open the URL and add the bot to your server.
+3. `docket discord set-token` (paste the token when asked; stored in `~/.config/docket/config.yaml`, shared by all projects).
+4. In Discord enable Developer Mode, right-click the channel → Copy Channel ID, then in the project:
+   `docket discord channel <channel-id>` or `:discord <channel-id>` in the TUI (`off` disables).
+
+The project daemon connects within seconds (header shows `◉ discord`, Dashboard activity shows the connection
+state). The daemon must be running — answers come from your machine. `docket discord status` shows the config.
+
+How it stays read-only: each answer is a headless `claude -p` call (resumed per thread) in an isolated config dir
+with **no shell** — only Read, Grep, Glob. It runs in a detached worktree of `origin/<base branch>` (tracked files
+only — no `.env`, no `.docket/` data); reads outside that worktree, the docs and its context folder are denied, and
+project state (questions, features, full tickets, recent git log) is pre-rendered into the context folder. At most
+2 answers run at once per project and one per thread; extra messages get a "busy" reply instead of queueing.
+Anyone who can post in the channel can ask, so pick a channel whose members may see the code.
 
 ## How it works
 
@@ -141,7 +195,7 @@ project and stored in its database.
 - **Daemon** (`docket daemon`, auto-started) — every 5 s: reap finished runs, run the review loop, start testers,
   dispatch developers; every 60 s: poll PRs (merged / closed / conflicting). The TUI and agents talk to it over a
   unix socket; state lives in SQLite, so restarts resume cleanly.
-- **Agents** — `claude` in tmux with `--setting-sources user`, a strict MCP config (codegraph only) and an
+- **Agents** — `claude` in tmux with `--setting-sources user`, a strict MCP config (codegraph, plus Pencil when installed) and an
   isolated config dir. They report back through the `docket` CLI and finish with `docket run done`.
 - **Roles** — TechLead (planning, ticket chat, new-ticket chat), Developer (implement, rework, resolve conflicts),
   Tester (review-only), Advisor (explains questions).
@@ -163,4 +217,7 @@ gets which skill.
 
 - Agents run with `--dangerously-skip-permissions` inside their worktrees. Only use docket on repositories and
   machines where that is acceptable.
-- Agents push branches and open PRs but never merge — merging is always yours.
+- Agents push branches and open PRs but never merge — merging is yours, unless you turn on auto-merge for a
+  project (off by default): then TechLead squash-merges Tester-approved PRs it judges complete.
+- Backend Support (Discord) is the exception: no shell, read-only tools, default permission mode (anything
+  outside its folders is denied). Its answers are visible to everyone in the channel.
