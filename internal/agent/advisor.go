@@ -103,7 +103,8 @@ func LaunchNewTicketChat(in ChatInput) (string, error) {
 		third: in.Third, token: in.Token, extra: skills, files: map[string]string{},
 		prompt: `You are the TechLead, chatting live with the project owner who wants NEW work done.
 Read {ctx}/PROJECT.md first (phase, features, existing tickets). Use skill create-ticket.
-Greet in one line and ask what they need; then clarify only what is essential and create the ticket(s).`})
+Greet in one line and ask what they need; then clarify only what is essential, propose the ticket(s)
+and create them ONLY after the user explicitly confirms (e.g. "ok").`})
 }
 
 func orNone(s string) string {
