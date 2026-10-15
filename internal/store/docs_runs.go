@@ -16,6 +16,7 @@ type ThirdDoc struct {
 // Run is one agent process (TechLead, Developer or Tester) hosted in tmux.
 type Run struct {
 	ID, Role, Task, Session, Workdir, Status, Summary string
+	ClaudeSession                                     string // Claude Code session id (resumable with --resume)
 	TicketID                                          int64
 	Callback                                          bool
 	StartedAt, EndedAt                                time.Time
@@ -57,17 +58,17 @@ func (d *DB) DeleteThirdDoc(id int64) error {
 }
 
 func (d *DB) InsertRun(r Run) error {
-	_, err := d.Exec(`INSERT INTO runs(id,role,task,ticket_id,session,workdir,started_at) VALUES(?,?,?,?,?,?,?)`,
-		r.ID, r.Role, r.Task, r.TicketID, r.Session, r.Workdir, now())
+	_, err := d.Exec(`INSERT INTO runs(id,role,task,ticket_id,session,workdir,claude_session,started_at) VALUES(?,?,?,?,?,?,?,?)`,
+		r.ID, r.Role, r.Task, r.TicketID, r.Session, r.Workdir, r.ClaudeSession, now())
 	return err
 }
 
-const runCols = `id,role,task,ticket_id,session,workdir,status,callback,summary,started_at,ended_at`
+const runCols = `id,role,task,ticket_id,session,workdir,status,callback,summary,started_at,ended_at,claude_session`
 
 func scanRun(s interface{ Scan(...any) error }) (Run, error) {
 	var r Run
 	var st, en int64
-	err := s.Scan(&r.ID, &r.Role, &r.Task, &r.TicketID, &r.Session, &r.Workdir, &r.Status, &r.Callback, &r.Summary, &st, &en)
+	err := s.Scan(&r.ID, &r.Role, &r.Task, &r.TicketID, &r.Session, &r.Workdir, &r.Status, &r.Callback, &r.Summary, &st, &en, &r.ClaudeSession)
 	r.StartedAt = time.Unix(st, 0)
 	if en > 0 {
 		r.EndedAt = time.Unix(en, 0)
@@ -117,6 +118,20 @@ func (d *DB) RunningRuns() ([]Run, error) {
 func (d *DB) MarkCallback(id, summary string) error {
 	_, err := d.Exec(`UPDATE runs SET callback=1, summary=? WHERE id=?`, summary, id)
 	return err
+}
+
+// LastClaudeSession returns the Claude session of the latest run of role on a
+// ticket if that run finished cleanly (`docket run done`), else "". Only a
+// clean run is worth resuming; a crashed or stopped one starts fresh.
+func (d *DB) LastClaudeSession(role string, ticketID int64) string {
+	var s, status string
+	var cb bool
+	_ = d.QueryRow(`SELECT claude_session, status, callback FROM runs WHERE role=? AND ticket_id=?
+		ORDER BY started_at DESC, rowid DESC LIMIT 1`, role, ticketID).Scan(&s, &status, &cb)
+	if status != RunDone || !cb {
+		return ""
+	}
+	return s
 }
 
 func (d *DB) FinishRun(id, status string) error {

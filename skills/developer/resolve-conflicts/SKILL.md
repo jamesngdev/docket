@@ -22,7 +22,8 @@ You are in the ticket's worktree. The PR target branch is in TICKET.md ("PR targ
 5. `git push --force-with-lease origin HEAD:<ticket branch>`
 6. Verify `gh pr view <url> --json mergeable -q .mergeable` is not CONFLICTING (UNKNOWN: wait a few seconds, retry).
 7. Comment on the PR what you resolved and why: `gh pr comment <url> --body-file notes.md`.
-8. `docket ticket status <id> wait_review --pr <url>` then `docket run done --summary "conflicts resolved"`.
+8. `docket ticket status <id> wait_review --pr <url>` (10-minute shell timeout: it runs the gate, see skill
+   open-pr; fix and retry until it passes) then `docket run done --summary "conflicts resolved"`.
 
 If a conflict needs a product decision: `git rebase --abort`, explain the exact conflict in a PR comment, and finish
 with `docket run done --summary "unresolved: <reason>"` WITHOUT setting the status (the ticket is flagged for the user).

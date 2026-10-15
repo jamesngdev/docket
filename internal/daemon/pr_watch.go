@@ -33,9 +33,7 @@ func (d *Daemon) pollPRs() {
 		switch state {
 		case "MERGED":
 			merged = true
-			_ = d.db.UpdateTicketFields(t.ID, map[string]any{"status": store.TDone, "locked_by": "", "needs_user": 0, "pr_conflict": 0})
-			gitops.RemoveWorktree(p.RepoPath, d.paths.Worktree(strconv.FormatInt(t.ID, 10)))
-			d.db.Log("github", "PR merged; ticket #%d done", t.ID)
+			d.markMerged(p, t)
 		case "CLOSED":
 			if !t.NeedsUser {
 				_ = d.db.UpdateTicketFields(t.ID, map[string]any{"needs_user": 1})
@@ -48,12 +46,21 @@ func (d *Daemon) pollPRs() {
 			}
 		}
 	}
-	d.startAutoMerge(p, ready)
+	if d.startAutoMerge(p, ready) {
+		merged = true
+	}
 	if merged {
 		// The base branch moved: re-check the other PRs soon (GitHub needs a few
 		// seconds to recompute mergeability, so not on this very tick).
 		d.lastPoll = time.Now().Add(-pollPREvery + 15*time.Second)
 	}
+}
+
+// markMerged closes a ticket whose PR landed and frees its worktree.
+func (d *Daemon) markMerged(p store.Project, t store.Ticket) {
+	_ = d.db.UpdateTicketFields(t.ID, map[string]any{"status": store.TDone, "locked_by": "", "needs_user": 0, "pr_conflict": 0})
+	gitops.RemoveWorktree(p.RepoPath, d.paths.Worktree(strconv.FormatInt(t.ID, 10)))
+	d.db.Log("github", "PR merged; ticket #%d done", t.ID)
 }
 
 func (d *Daemon) handleMergeable(p store.Project, t store.Ticket, all []store.Ticket, mergeable string) {

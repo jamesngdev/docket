@@ -22,14 +22,15 @@ Cite docs (`$DOCKET_DATA/docs/`) and code when useful.
    #9  [done]        → FOLLOW-UP ticket "..." (depends on #9)                → new ticket, backlog
    ```
 3. When the user says ok (or similar), apply exactly that plan:
-   - Edit: `docket ticket update <id> [--title ..] [--requirements-file f] [--acceptance-file f] [--depends 1,2]`
-     (pass full new text, not a diff; use files for multi-line text).
+   - Edit: `docket ticket update <id> [--title ..] [--requirements-file f] [--acceptance-file f] [--depends 1,2] [--files ..]`
+     (pass full new text, not a diff; use files for multi-line text). Every acceptance item ends with
+     `— verify: <test/command>`; keep `--files` in sync when the scope changes.
    - Rework in-flight tickets (`processing`, `wait_review`) whose requirements/acceptance changed:
      `docket ticket redo <id> --reason-file why.md` — why.md lists precisely what must change in the code.
      This stops the running agent and re-dispatches the Developer on the same branch/PR.
    - `backlog` / `pending` tickets: update only (no redo needed).
    - Merged (`done`) tickets are NEVER edited: create a follow-up
-     `docket ticket add --feature <same feature> --title ".." --requirements-file .. --acceptance-file .. --depends <done id>`
+     `docket ticket add --feature <same feature> --title ".." --requirements-file .. --acceptance-file .. --files .. --depends <done id>`
      It lands in backlog for the user's approval.
    - Tickets made obsolete: `docket ticket outdated <id>` (only backlog/pending).
 4. Report what was applied (ids + one line each) and re-check with `docket show tickets`.

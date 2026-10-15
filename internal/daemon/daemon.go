@@ -35,6 +35,9 @@ type Daemon struct {
 	stopOnce sync.Once
 	version  string // ipc.BinaryVersion at start; lets clients detect a stale daemon
 	discord  discordState
+	// ciPendingSince remembers when an auto-merge candidate was first seen with
+	// CI still running (scheduler goroutine only; reset on restart is fine).
+	ciPendingSince map[int64]time.Time
 }
 
 // Run blocks until shutdown. It is started by `docket daemon --project <repo>`.

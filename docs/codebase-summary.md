@@ -25,10 +25,11 @@ make test                            # vet + tests
 | `internal/docscan` | Hash docs `*.md`, diff vs previous scan (A/M/D) |
 | `internal/gitops`, `internal/gh`, `internal/tmux`, `internal/sh` | Thin wrappers over git, gh, tmux, exec |
 | `skills/` | Embedded skill bundle + `manifest.yaml` (role → skills). The only skills agents ever get |
-| `internal/agent` | Isolated `CLAUDE_CONFIG_DIR` per role, context files (PROJECT.md, TICKET.md, 3TH_DOCUMENT.md), kickoff prompts, tmux launch |
+| `internal/agent` | Isolated `CLAUDE_CONFIG_DIR` per role, context files (PROJECT.md, TICKET.md, 3TH_DOCUMENT.md, all with REPO.md notes), kickoff and resume prompts, Claude session ids, tmux launch |
+| `internal/gate` | `wait_review` gate: pushed + committed, no `.docket/`/`.env`/secrets, PR body template, `checks.yaml` commands; derives risk flags (migration, auth, deps, CI, deleted tests, out-of-scope files, diff size) |
 | `internal/discord` | Discord Connect: per-daemon gateway connection, @mention → thread, follow-ups resume the thread's session, chunked replies |
 | `internal/support` | Read-only Backend Support: headless `claude -p` (+`--resume`), no shell (Read/Grep/Glob only) in a detached base-branch worktree; project state + git log pre-rendered into its context dir |
-| `internal/daemon` | Loop every 5s + on kick: reap runs, review loop, start tester, dispatch developers, poll PRs (60s); TechLead tasks; docs rescan; compose up |
+| `internal/daemon` | Loop every 5s + on kick: reap runs, review loop, start testers (parallel), dispatch developers, poll PRs (60s); auto-merge (low risk directly, flagged PRs via TechLead); TechLead tasks; docs rescan; compose up |
 | `internal/ipc` | Newline-JSON over unix socket (ping, kick, techlead, rescan, stop, restart, compose, shutdown) |
 | `internal/cli` | Agent-facing commands (`question/feature/ticket/review/run`), `show`, `daemon`, `auth` |
 | `internal/project` | New project: clone, `.docket/` layout, git info/exclude, docs clone, DB, register |
@@ -43,6 +44,17 @@ make test                            # vet + tests
    `docket run done`.
 3. Next tick: callback seen → session killed, run `done`; session gone without callback → run `failed`.
 4. `onFinished`: bootstrap → compose up; developer → unlock (or back to pending + `needs_user`); tester → remove review worktree.
+
+## Agent efficiency
+
+- `.docket/REPO.md` + `.docket/checks.yaml` are written by TechLead (skill write-repo-notes) at bootstrap, or on
+  the next TechLead task when missing. REPO.md is pasted into every context file; agents append with `docket note add`.
+- Every run gets `claude --session-id <uuid>` (stored in `runs.claude_session`). A later Developer or Tester run on
+  the same ticket uses `--resume` when the transcript still exists in the role home, with a short delta prompt
+  (`ResumeKickoff`). Worktree paths are stable per ticket, which Claude needs to find the session.
+- Tickets carry `planned_files` (`--files`, required), an optional `model`, and the gate's `gate_sha` + `risk_flags`.
+  Acceptance items must end with `verify: …`.
+- Team skill repos are pulled at most every 10 minutes (stamp in the clone's `.git`).
 
 ## Known limits / to verify
 

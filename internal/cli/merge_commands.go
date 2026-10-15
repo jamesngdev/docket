@@ -40,7 +40,7 @@ func ticketMerge(db *store.DB, p paths.Project, a args, actor string) error {
 	case t.PRConflict:
 		return fmt.Errorf("ticket #%d's PR has merge conflicts", id)
 	}
-	if err := gh.MergePR(t.PRURL); err != nil {
+	if err := gh.MergePR(t.PRURL, ""); err != nil {
 		db.Log(actor, "merge of ticket #%d failed: %v", id, err)
 		return err
 	}
@@ -70,11 +70,29 @@ func autoMergeCmd(a args, sub string) error {
 		db.Log("user", "auto-merge %s", sub)
 		kick(p)
 		return nil
+	case "review":
+		mode := ""
+		if len(a.pos) > 1 {
+			mode = a.pos[1]
+		}
+		if mode != store.MergeReviewRisky && mode != store.MergeReviewAll {
+			return fmt.Errorf("usage: docket automerge review risky|all")
+		}
+		proj.Settings.MergeReview = mode
+		if err := db.SaveSettings(proj.Settings); err != nil {
+			return err
+		}
+		db.Log("user", "auto-merge review: %s", mode)
+		return nil
 	case "status", "":
-		fmt.Printf("auto-merge: %s\n", map[bool]string{true: "on", false: "off"}[proj.Settings.AutoMerge])
+		review := proj.Settings.MergeReview
+		if review == "" {
+			review = store.MergeReviewRisky
+		}
+		fmt.Printf("auto-merge: %s · review: %s\n", map[bool]string{true: "on", false: "off"}[proj.Settings.AutoMerge], review)
 		return nil
 	}
-	return fmt.Errorf("usage: docket automerge on|off|status")
+	return fmt.Errorf("usage: docket automerge on|off|status | automerge review risky|all")
 }
 
 // oneLineText collapses whitespace for activity log entries.

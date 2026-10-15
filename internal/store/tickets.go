@@ -35,16 +35,22 @@ type Ticket struct {
 	PRConflict                      bool   // GitHub reports the PR as CONFLICTING with its base
 	ConflictAttempts                int    // auto-resolve runs since the PR was last mergeable
 	MergeCheckedAt                  int64  // unix time TechLead last got this PR for an auto-merge decision
+	PlannedFiles                    string // comma-separated paths/globs the ticket is expected to touch
+	Model                           string // Developer model override for this ticket ("" = project default)
+	RiskFlags                       string // set by the wait_review gate; "" = low risk (fast auto-merge path)
+	GateSHA                         string // commit the wait_review gate checks passed on
 }
 
 const ticketCols = `id,feature_id,title,requirements,acceptance,depends_on,status,branch,pr_url,locked_by,
-	review_state,review_summary,review_rounds,needs_user,phase,change_request,pr_conflict,conflict_attempts,merge_checked_at`
+	review_state,review_summary,review_rounds,needs_user,phase,change_request,pr_conflict,conflict_attempts,merge_checked_at,
+	planned_files,model,risk_flags,gate_sha`
 
 func scanTicket(s interface{ Scan(...any) error }) (Ticket, error) {
 	var t Ticket
 	var deps string
 	err := s.Scan(&t.ID, &t.FeatureID, &t.Title, &t.Requirements, &t.Acceptance, &deps, &t.Status, &t.Branch,
-		&t.PRURL, &t.LockedBy, &t.ReviewState, &t.ReviewSummary, &t.ReviewRounds, &t.NeedsUser, &t.Phase, &t.ChangeRequest, &t.PRConflict, &t.ConflictAttempts, &t.MergeCheckedAt)
+		&t.PRURL, &t.LockedBy, &t.ReviewState, &t.ReviewSummary, &t.ReviewRounds, &t.NeedsUser, &t.Phase, &t.ChangeRequest, &t.PRConflict, &t.ConflictAttempts, &t.MergeCheckedAt,
+		&t.PlannedFiles, &t.Model, &t.RiskFlags, &t.GateSHA)
 	t.DependsOn = ParseIDs(deps)
 	return t, err
 }
@@ -69,8 +75,9 @@ func JoinIDs(ids []int64) string {
 }
 
 func (d *DB) AddTicket(t Ticket) (int64, error) {
-	r, err := d.Exec(`INSERT INTO tickets(feature_id,title,requirements,acceptance,depends_on,created_at,updated_at,phase)
-		VALUES(?,?,?,?,?,?,?,`+activePhaseSQL+`)`, t.FeatureID, t.Title, t.Requirements, t.Acceptance, JoinIDs(t.DependsOn), now(), now())
+	r, err := d.Exec(`INSERT INTO tickets(feature_id,title,requirements,acceptance,depends_on,planned_files,model,created_at,updated_at,phase)
+		VALUES(?,?,?,?,?,?,?,?,?,`+activePhaseSQL+`)`, t.FeatureID, t.Title, t.Requirements, t.Acceptance, JoinIDs(t.DependsOn),
+		t.PlannedFiles, t.Model, now(), now())
 	if err != nil {
 		return 0, err
 	}
@@ -118,23 +125,46 @@ func (d *DB) SetTicketStatus(id int64, status string) error {
 	return err
 }
 
+// ticketColumns are the columns UpdateTicketFields may set.
+var ticketColumns = map[string]bool{"title": true, "requirements": true, "acceptance": true, "depends_on": true,
+	"branch": true, "pr_url": true, "locked_by": true, "review_state": true, "review_summary": true,
+	"review_rounds": true, "needs_user": true, "status": true, "change_request": true,
+	"pr_conflict": true, "conflict_attempts": true, "planned_files": true, "model": true,
+	"risk_flags": true, "gate_sha": true, "merge_checked_at": true}
+
 // UpdateTicketFields sets arbitrary whitelisted columns on a ticket.
 func (d *DB) UpdateTicketFields(id int64, fields map[string]any) error {
-	allowed := map[string]bool{"title": true, "requirements": true, "acceptance": true, "depends_on": true,
-		"branch": true, "pr_url": true, "locked_by": true, "review_state": true, "review_summary": true,
-		"review_rounds": true, "needs_user": true, "status": true, "change_request": true,
-		"pr_conflict": true, "conflict_attempts": true}
+	_, err := d.updateTicket(id, "", fields)
+	return err
+}
+
+// UpdateTicketFieldsIfLocked updates only while the ticket is still locked by
+// runID, atomically; it reports whether the row was updated.
+func (d *DB) UpdateTicketFieldsIfLocked(id int64, runID string, fields map[string]any) (bool, error) {
+	return d.updateTicket(id, runID, fields)
+}
+
+func (d *DB) updateTicket(id int64, lockedBy string, fields map[string]any) (bool, error) {
 	sets, args := []string{"updated_at=?"}, []any{now()}
 	for k, v := range fields {
-		if !allowed[k] {
+		if !ticketColumns[k] {
 			continue
 		}
 		sets = append(sets, k+"=?")
 		args = append(args, v)
 	}
+	where := ` WHERE id=?`
 	args = append(args, id)
-	_, err := d.Exec(`UPDATE tickets SET `+strings.Join(sets, ",")+` WHERE id=?`, args...)
-	return err
+	if lockedBy != "" {
+		where += ` AND locked_by=?`
+		args = append(args, lockedBy)
+	}
+	r, err := d.Exec(`UPDATE tickets SET `+strings.Join(sets, ",")+where, args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := r.RowsAffected()
+	return n > 0, err
 }
 
 // Dispatchable returns pending tickets whose dependencies are all done,

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, p, s string) {
@@ -43,6 +44,14 @@ func TestSyncPullsLatest(t *testing.T) {
 	write(t, filepath.Join(remote, "skills/llms-txt-sync/SKILL.md"), "---\nname: llms-txt-sync\ndescription: Sync docs.\n---\n")
 	git("add", ".")
 	git("commit", "-q", "-m", "two")
+	if skills, _ = Sync([]string{remote}, cache); len(skills) != 1 {
+		t.Fatalf("a repo pulled moments ago must not be pulled again: %+v", skills)
+	}
+	stamp := filepath.Join(cacheDir(cache, remote), ".git", "docket-pulled-at")
+	old := time.Now().Add(-2 * pullEvery)
+	if err := os.Chtimes(stamp, old, old); err != nil {
+		t.Fatal(err)
+	}
 	skills, errs = Sync([]string{remote}, cache)
 	if len(errs) > 0 || len(skills) != 2 {
 		t.Fatalf("second sync must pull the new skill: %+v %v", skills, errs)

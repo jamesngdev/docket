@@ -24,6 +24,10 @@ type Spawn struct {
 	Prompt   string
 	Token    string            // CLAUDE_CODE_OAUTH_TOKEN; empty = reuse the user's normal `claude` login
 	Extra    []extskills.Skill // external team skills to install (and announce in the prompt)
+	// ClaudeSession pins the Claude Code session id ("" = let claude pick one).
+	// With Resume the run continues that existing conversation instead.
+	ClaudeSession string
+	Resume        bool
 }
 
 // NewRunID returns a short sortable id like "developer-m3x9k2".
@@ -76,8 +80,15 @@ func Launch(s Spawn) (string, error) {
 		// the isolated CLAUDE_CONFIG_DIR. Verified with claude 2.1.296.
 		env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = ""
 	}
-	cmd := fmt.Sprintf(`exec claude --setting-sources user --strict-mcp-config --mcp-config %s --dangerously-skip-permissions --model %s "$(cat %s)"`,
-		tmux.Quote(s.Paths.MCPConfig()), tmux.Quote(s.Model), tmux.Quote(promptFile))
+	sessionFlag := ""
+	switch {
+	case s.ClaudeSession != "" && s.Resume:
+		sessionFlag = "--resume " + tmux.Quote(s.ClaudeSession) + " "
+	case s.ClaudeSession != "":
+		sessionFlag = "--session-id " + tmux.Quote(s.ClaudeSession) + " "
+	}
+	cmd := fmt.Sprintf(`exec claude --setting-sources user --strict-mcp-config --mcp-config %s --dangerously-skip-permissions --model %s %s"$(cat %s)"`,
+		tmux.Quote(s.Paths.MCPConfig()), tmux.Quote(s.Model), sessionFlag, tmux.Quote(promptFile))
 	session := SessionName(s.Slug, s.Role, s.TicketID, s.RunID)
 	tmux.Kill(session) // stale session from a crashed run
 	err = tmux.Start(tmux.Spec{Name: session, Dir: s.Workdir, Env: env, Command: cmd, LogFile: s.Paths.RunLog(s.RunID)})

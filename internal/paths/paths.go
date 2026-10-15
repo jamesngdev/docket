@@ -35,6 +35,8 @@ func (p Project) ClaudeHomes() string { return filepath.Join(p.Root(), "claude-h
 func (p Project) MCPConfig() string   { return filepath.Join(p.Root(), "mcp.json") }
 func (p Project) ComposeFile() string { return filepath.Join(p.Root(), "docker-compose.yml") }
 func (p Project) DevDBEnv() string    { return filepath.Join(p.Root(), "dev-db.env") }
+func (p Project) RepoNotes() string   { return filepath.Join(p.Root(), "REPO.md") }     // shared repo knowledge for every agent
+func (p Project) Checks() string      { return filepath.Join(p.Root(), "checks.yaml") } // commands the wait_review gate runs
 func (p Project) PIDFile() string     { return filepath.Join(p.Root(), "daemon.pid") }
 func (p Project) DaemonLog() string   { return filepath.Join(p.Logs(), "daemon.log") }
 func (p Project) ClaudeHome(role string) string {

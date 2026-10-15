@@ -63,8 +63,13 @@ func (d *Daemon) startTechlead(task string) error {
 	ctxDir := d.paths.RunContext(runID)
 	earlier, _ := d.db.FeatureTitlesOutsidePhase()
 	in := agent.TechleadInput{Project: p, Task: task, Docs: docs, EarlierFeatures: earlier, PrevCommit: p.PrevDocsCommit, DocsHead: p.DocsCommit,
-		Questions: qs, Features: fs, Tickets: ts}
+		Questions: qs, Features: fs, Tickets: ts, RepoNotes: readFile(d.paths.RepoNotes())}
 	files := map[string]string{"PROJECT.md": agent.ProjectMarkdown(in), "3TH_DOCUMENT.md": agent.ThirdDocsMarkdown(third)}
+	if task != agent.TaskBootstrap && (readFile(d.paths.RepoNotes()) == "" || readFile(d.paths.Checks()) == "") {
+		// Projects created before repo notes existed: fill them in once.
+		files["PROJECT.md"] = "> FIRST: `.docket/REPO.md` or `.docket/checks.yaml` is missing. Use skill write-repo-notes, then do your task.\n\n" +
+			files["PROJECT.md"]
+	}
 	if task == agent.TaskMerge {
 		all, _ := d.db.AllTickets() // PRs of every phase can be ready
 		files["MERGE.md"] = mergeMarkdown(p, all)
@@ -146,6 +151,12 @@ func (d *Daemon) composeUp() error {
 	}
 	d.db.Log("docker", "shared dev stack is up (project docket-%s)", p.Slug)
 	return nil
+}
+
+// readFile returns a file's content, "" when it is missing.
+func readFile(path string) string {
+	b, _ := os.ReadFile(path)
+	return string(b)
 }
 
 func short(c string) string {

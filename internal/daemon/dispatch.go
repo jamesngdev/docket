@@ -12,28 +12,78 @@ import (
 	"docket/internal/store"
 )
 
-// launch starts an agent in tmux and records the run.
+// launch starts an agent in tmux and records the run. Ticket runs of a
+// Developer or Tester resume that role's previous Claude session on the ticket
+// when it still exists, so review rounds, redos and conflict fixes keep the
+// knowledge of the earlier run instead of re-exploring the codebase.
 func (d *Daemon) launch(p store.Project, role, task, runID string, ticketID int64, workdir string) error {
 	var extra []extskills.Skill
 	if extskills.RolesWithTeamSkills[role] {
 		extra = d.teamSkills()
 	}
-	session, err := agent.Launch(agent.Spawn{Extra: extra,
-		Paths: d.paths, Slug: p.Slug, Role: role, Model: p.Settings.Models[role], RunID: runID,
-		TicketID: ticketID, Workdir: workdir, Prompt: agent.Kickoff(role, task, d.paths.RunContext(runID), ticketID),
-		Token: d.token(),
-	})
+	ctxDir := d.paths.RunContext(runID)
+	s := agent.Spawn{Extra: extra,
+		Paths: d.paths, Slug: p.Slug, Role: role, Model: d.modelFor(p, role, ticketID), RunID: runID,
+		TicketID: ticketID, Workdir: workdir, Prompt: agent.Kickoff(role, task, ctxDir, ticketID),
+		Token: d.token(), ClaudeSession: agent.NewSessionID(),
+	}
+	if d.resumable(role, task, ticketID) {
+		if prev := d.db.LastClaudeSession(role, ticketID); agent.SessionExists(d.paths.ClaudeHome(role), prev) {
+			s.ClaudeSession, s.Resume = prev, true
+			s.Prompt = agent.ResumeKickoff(role, task, ctxDir, ticketID)
+		}
+	}
+	session, err := agent.Launch(s)
 	if err != nil {
 		return err
 	}
-	if err := d.db.InsertRun(store.Run{ID: runID, Role: role, Task: task, TicketID: ticketID, Session: session, Workdir: workdir}); err != nil {
+	if err := d.db.InsertRun(store.Run{ID: runID, Role: role, Task: task, TicketID: ticketID, Session: session, Workdir: workdir,
+		ClaudeSession: s.ClaudeSession}); err != nil {
 		return err
 	}
-	d.db.Log(role, "started %s (%s)", runID, session)
+	resumed := ""
+	if s.Resume {
+		resumed = ", resumed session"
+	}
+	d.db.Log(role, "started %s (%s%s)", runID, session, resumed)
 	return nil
 }
 
-// teamSkills pulls the team skill repos (fresh on every Developer/TechLead start).
+// resumable reports whether this ticket run is a follow-up the previous
+// session of the role should continue: a Developer addressing review feedback,
+// a change request or merge conflicts, or a Tester re-reviewing after it
+// requested changes. Anything else (first run, retry after a failure, reset
+// review) starts a fresh session with the full kickoff.
+func (d *Daemon) resumable(role, task string, ticketID int64) bool {
+	if ticketID == 0 {
+		return false
+	}
+	t, err := d.db.Ticket(ticketID)
+	if err != nil {
+		return false
+	}
+	switch role {
+	case agent.RoleDeveloper:
+		return task == agent.TaskResolveConflicts || t.ChangeRequest != "" ||
+			(t.ReviewState == store.RRequestChanges && t.ReviewSummary != "")
+	case agent.RoleTester:
+		return t.ReviewRounds > 0
+	}
+	return false
+}
+
+// modelFor picks the run's model: a ticket's own model (set by TechLead for
+// unusually easy or hard tickets) wins over the project's per-role default.
+func (d *Daemon) modelFor(p store.Project, role string, ticketID int64) string {
+	if role == agent.RoleDeveloper && ticketID > 0 {
+		if t, err := d.db.Ticket(ticketID); err == nil && t.Model != "" {
+			return t.Model
+		}
+	}
+	return p.Settings.Models[role]
+}
+
+// teamSkills pulls the team skill repos (at most every 10 minutes per repo).
 func (d *Daemon) teamSkills() []extskills.Skill {
 	skills, errs := extskills.Load()
 	for _, err := range errs {
@@ -104,13 +154,15 @@ func (d *Daemon) startDeveloperTask(p store.Project, t store.Ticket, all []store
 	return d.launch(p, agent.RoleDeveloper, task, runID, t.ID, wt)
 }
 
-// startTesters reviews one wait_review ticket at a time.
+// startTesters reviews wait_review tickets in parallel, up to the same slot
+// limit as Developers, so reviews never become the pipeline's bottleneck.
 func (d *Daemon) startTesters() {
-	if d.runningRole(agent.RoleTester) > 0 {
-		return
-	}
 	p, err := d.project()
 	if err != nil {
+		return
+	}
+	free := p.Settings.MaxParallelAgents - d.runningRole(agent.RoleTester)
+	if free <= 0 {
 		return
 	}
 	all, _ := d.db.AllTickets() // finish reviews of earlier phases too
@@ -121,8 +173,11 @@ func (d *Daemon) startTesters() {
 		if err := d.startTester(p, t, all); err != nil {
 			d.db.Log("tester", "ticket #%d: %v", t.ID, err)
 			_ = d.db.UpdateTicketFields(t.ID, map[string]any{"locked_by": "", "review_state": store.RError, "needs_user": 1})
+			continue
 		}
-		return
+		if free--; free == 0 {
+			return
+		}
 	}
 }
 
@@ -171,10 +226,11 @@ func (d *Daemon) writeTicketContext(p store.Project, t store.Ticket, all []store
 		}
 	}
 	env, _ := os.ReadFile(d.paths.DevDBEnv())
+	notes, _ := os.ReadFile(d.paths.RepoNotes())
 	third, _ := d.db.ThirdDocs()
 	return agent.WriteFiles(d.paths.RunContext(runID), map[string]string{
 		"TICKET.md": agent.TicketMarkdown(agent.TicketInput{Project: p, Ticket: t, Feature: feature, Deps: deps, DevEnv: string(env),
-			RecentMerged: recentMerged(all, t.ID)}),
+			RecentMerged: recentMerged(all, t.ID), RepoNotes: string(notes)}),
 		"3TH_DOCUMENT.md": agent.ThirdDocsMarkdown(third),
 	})
 }

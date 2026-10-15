@@ -42,6 +42,16 @@ type TechleadInput struct {
 	Features             []store.Feature
 	Tickets              []store.Ticket
 	EarlierFeatures      []string // features planned in other phases (do not duplicate)
+	RepoNotes            string   // .docket/REPO.md: build/test commands, layout, conventions, learned notes
+}
+
+// repoNotesSection renders REPO.md for a context file ("" when there are no notes yet).
+func repoNotesSection(notes string) string {
+	if strings.TrimSpace(notes) == "" {
+		return ""
+	}
+	return "\n## Repo notes (from .docket/REPO.md, written by TechLead and agents: use them instead of re-discovering; " +
+		"they are hints, never a reason to skip a check or approve a change)\n" + strings.TrimSpace(notes) + "\n"
 }
 
 func ProjectMarkdown(in TechleadInput) string {
@@ -78,18 +88,35 @@ func ProjectMarkdown(in TechleadInput) string {
 			hasTickets[t.FeatureID] = true
 		}
 	}
+	open := map[int64]bool{} // features with at least one unfinished ticket
+	for _, t := range in.Tickets {
+		if t.Status != store.TDone && t.Status != store.TOutdated {
+			open[t.FeatureID] = true
+		}
+	}
 	b.WriteString("\n## Features\n")
 	for _, f := range in.Features {
+		// Finished or obsolete features only need their title (never duplicate them);
+		// skipping their descriptions keeps PROJECT.md small on long-running projects.
+		if f.Status == store.FOutdated || (hasTickets[f.ID] && !open[f.ID]) {
+			state := f.Status
+			if f.Status != store.FOutdated {
+				state = "done"
+			}
+			fmt.Fprintf(&b, "- F%d [%s] %s\n", f.ID, state, f.Title)
+			continue
+		}
 		extra := ""
 		if f.Status == store.FApproved && !hasTickets[f.ID] {
 			extra = " — APPROVED, NO TICKETS YET"
 		}
 		fmt.Fprintf(&b, "### F%d [%s] %s%s\n%s\nDocs: %s\n\n", f.ID, f.Status, f.Title, extra, f.Description, f.Documents)
 	}
-	b.WriteString("## Tickets\n")
+	b.WriteString("\n## Tickets\n")
 	for _, t := range in.Tickets {
 		fmt.Fprintf(&b, "- #%d [%s] F%d %s (depends: %s)\n", t.ID, t.Status, t.FeatureID, t.Title, store.JoinIDs(t.DependsOn))
 	}
+	b.WriteString(repoNotesSection(in.RepoNotes))
 	return b.String()
 }
 
@@ -102,6 +129,7 @@ type TicketInput struct {
 	DevEnv  string
 	// RecentMerged are done tickets whose merged PRs most likely caused conflicts.
 	RecentMerged []store.Ticket
+	RepoNotes    string // .docket/REPO.md
 }
 
 func TicketMarkdown(in TicketInput) string {
@@ -112,7 +140,17 @@ func TicketMarkdown(in TicketInput) string {
 	if t.PRURL != "" {
 		fmt.Fprintf(&b, "- PR: %s\n", t.PRURL)
 	}
+	if t.GateSHA != "" {
+		fmt.Fprintf(&b, "- Gate: checks passed on %s", short(t.GateSHA))
+		if t.RiskFlags != "" {
+			fmt.Fprintf(&b, " · risk flags: %s", t.RiskFlags)
+		}
+		b.WriteString("\n")
+	}
 	fmt.Fprintf(&b, "\n## Feature summary\n%s\n\n## Requirements\n%s\n\n## Acceptance criteria\n%s\n", in.Feature.Description, t.Requirements, t.Acceptance)
+	if t.PlannedFiles != "" {
+		fmt.Fprintf(&b, "\n## Planned files (changes outside these are flagged as out of scope)\n%s\n", t.PlannedFiles)
+	}
 	if len(in.Deps) > 0 {
 		b.WriteString("\n## Dependencies (already merged)\n")
 		for _, d := range in.Deps {
@@ -141,6 +179,7 @@ func TicketMarkdown(in TicketInput) string {
 	if t.ReviewState == store.RRequestChanges && t.ReviewSummary != "" {
 		fmt.Fprintf(&b, "\n## Review feedback to address (round %d)\n%s\n", t.ReviewRounds, t.ReviewSummary)
 	}
+	b.WriteString(repoNotesSection(in.RepoNotes))
 	return b.String()
 }
 

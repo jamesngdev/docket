@@ -25,13 +25,15 @@ docket phase list | phase set <docs-branch>   list / switch the active phase (do
 docket show questions|features|tickets|ticket <id>
 docket question add --text T [--source S] | question answer <id> --text T
 docket feature add --title T --description D [--docs a.md,b.md] | feature outdated <id>
-docket ticket add --feature F --title T --requirements R --acceptance A [--depends 1,2]
+docket ticket add --feature F --title T --requirements R --acceptance A --files a/,b.go [--depends 1,2] [--model M]
 docket ticket outdated <id> | ticket status <id> <status> [--pr URL]
-docket ticket update <id> [--title T] [--requirements R] [--acceptance A] [--depends 1,2]
+docket ticket update <id> [--title T] [--requirements R] [--acceptance A] [--depends 1,2] [--files F] [--model M|default]
 docket ticket redo <id> --reason R          rework an in-flight ticket on its branch
 docket ticket merge <id>                    squash-merge an approved PR (TechLead, auto-merge on)
 docket ticket flag <id> --reason R          flag a ticket for the user
-docket automerge on|off|status              TechLead reviews and merges Tester-approved PRs (this project)
+docket automerge on|off|status              merge Tester-approved PRs (this project)
+docket automerge review risky|all           risky (default): low-risk PRs with green CI merge directly, TechLead reviews the rest
+docket note add --text T                    record a repo fact for every later agent (.docket/REPO.md)
 docket review submit <ticket> --result approve|request_changes --summary S
 docket run done [--summary S]
 docket version                              print the installed version
@@ -42,7 +44,7 @@ var Version = "dev"
 
 // commands are the subcommands Run understands; anything else may be a path.
 var commands = map[string]bool{"help": true, "--help": true, "daemon": true, "auth": true, "show": true,
-	"discord": true, "automerge": true, "phase": true, "question": true, "feature": true, "ticket": true, "review": true, "run": true,
+	"discord": true, "automerge": true, "phase": true, "question": true, "feature": true, "ticket": true, "review": true, "run": true, "note": true,
 	"version": true, "--version": true}
 
 // IsCommand reports whether name is a docket subcommand (not a project path).
@@ -86,7 +88,7 @@ func Run(argv []string) error {
 		return autoMergeCmd(a, sub)
 	case "phase":
 		return phaseCmd(a, sub)
-	case "question", "feature", "ticket", "review", "run":
+	case "question", "feature", "ticket", "review", "run", "note":
 		return write(cmd, sub, parse(rest[min(1, len(rest)):]))
 	}
 	return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)

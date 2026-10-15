@@ -15,7 +15,17 @@ type Settings struct {
 	Models            map[string]string `json:"models"`
 	DiscordChannel    string            `json:"discord_channel,omitempty"` // Backend Support answers @mentions here
 	AutoMerge         bool              `json:"auto_merge,omitempty"`      // TechLead reviews and squash-merges approved PRs
+	// MergeReview is who decides on approved PRs when auto-merge is on:
+	// "risky" (default, "") merges low-risk PRs with green CI directly and sends
+	// only flagged ones to TechLead; "all" sends every PR to TechLead.
+	MergeReview string `json:"merge_review,omitempty"`
 }
+
+// Merge review modes.
+const (
+	MergeReviewRisky = "risky"
+	MergeReviewAll   = "all"
+)
 
 func DefaultSettings() Settings {
 	return Settings{

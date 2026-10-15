@@ -8,6 +8,10 @@ description: Auto-merge gate — review each Tester-approved PR listed in MERGE.
 Auto-merge is on for this project. For EVERY ticket in `MERGE.md` make exactly one decision. You are the last
 gate before code lands on the PR target branch, so be strict: when in doubt, do not merge.
 
+Low-risk PRs (gate passed on the PR head, no risk flags, CI green) were already merged by docket without you.
+Every ticket here lists why it needs you under "Risk flags": review THAT first and in depth (the migration, the
+auth change, the out-of-scope files, the failing CI). The rest of the diff was already checked by the Tester.
+
 ## Inspect each PR
 1. `gh pr view <url> --json title,body,state,mergeable,reviewDecision,statusCheckRollup,files`
 2. `gh pr checks <url>` — CI status.

@@ -23,14 +23,22 @@ pull request. Everything else runs in the background.
   compared to the previous phase.
 - **Parallel developers** — tickets are dispatched as soon as their dependencies are merged, up to N agents at
   once, each in its own git worktree and branch, sharing one docker-compose dev database.
-- **Review loop** — a Tester agent runs the tests and reviews every PR; requested changes send the ticket back to
-  its Developer automatically (bounded rounds).
+- **Repo notes** — on the first run TechLead writes `.docket/REPO.md` (commands, layout, conventions) and
+  `.docket/checks.yaml` (verify commands). Every agent gets the notes in its context as hints and appends what it learns
+  with `docket note add`, so no run re-discovers how to compile or test the repo.
+- **Mechanical gate** — before a ticket enters review, `docket ticket status <id> wait_review` checks the branch is
+  committed and pushed, the diff has no `.docket/`, `.env` or secrets, the PR body has Acceptance and Tests
+  sections, and runs `checks.yaml`. It also records risk flags: migrations, auth/security, dependencies, CI config,
+  deleted tests, files outside the ticket's planned files, large diffs.
+- **Review loop** — Tester agents review PRs in parallel, re-running tests only where the gate and CI do not
+  already prove them; requested changes send the ticket back to its Developer automatically (bounded rounds).
+  Follow-up runs on a ticket resume the same Claude session, so the Developer or Tester keeps what it learned.
 - **Merge conflicts handled** — open PRs are checked continuously; a conflicting PR is rebased and resolved by a
   Developer using the project context.
 - **Chat with the agents** — ask an Advisor to explain any question, chat with TechLead to change a ticket (and
   its related tickets), or describe new work and let TechLead create the tickets.
 - **Isolated agents** — agents never see your personal `~/.claude` skills, commands, hooks or MCP servers. They
-  get docket's bundled skills plus your team skill repos, pulled fresh on every run, while reusing your normal
+  get docket's bundled skills plus your team skill repos, refreshed at most every 10 minutes, while reusing your normal
   `claude` login.
 - **Background daemon** — dispatching, PR polling and reviews keep going after you close the TUI. Agents run in
   tmux, so you can attach to any of them and watch or intervene.
@@ -96,9 +104,10 @@ docket ~/code/my-api  # same, for any path inside a project
    (detach with `Ctrl-D`).
 5. Review and merge PRs on GitHub. docket notices the merge, marks the ticket done and unblocks its dependents.
    Or turn on **auto-merge** (`:automerge on`, `docket automerge on`, or "Auto merge: y" in the new-project form):
-   once the Tester approves a PR and GitHub reports no conflicts, a TechLead run reads the diff, CI checks and
-   acceptance criteria and then squash-merges it (deleting the branch), sends it back to the Developer, or flags it
-   for you. PRs it leaves open while CI is still running are offered again after 15 minutes.
+   once the Tester approves a PR, GitHub reports no conflicts and CI has finished, docket squash-merges it directly
+   when the gate passed on the PR head with no risk flags and CI is green. Every other approved PR goes to a
+   TechLead run, which reviews the flagged parts and squash-merges it, sends it back to the Developer, or flags it
+   for you. `docket automerge review all` sends every PR to TechLead instead.
 
 ## The TUI
 
@@ -131,6 +140,8 @@ docket phase list | phase set <docs-branch>
 docket show questions|features|tickets|ticket <id>
 docket ticket update <id> [--title ..] [--requirements-file f] [--acceptance-file f] [--depends 1,2]
 docket ticket redo <id> --reason "..."      # rework an in-flight ticket on its branch
+docket automerge on|off|status | automerge review risky|all
+docket note add --text "..."                # add a repo fact to .docket/REPO.md for every later agent
 docket daemon status|stop
 docket auth set-token <sk-ant-…> | auth clear-token
 docket help
@@ -143,7 +154,7 @@ docket help
 ```yaml
 projects:                    # registered project checkouts (managed by the TUI)
   - /path/to/repo
-team_skill_repos:            # skills given to Developers and TechLead, pulled on every run
+team_skill_repos:            # skills given to Developers and TechLead, pulled at most every 10 minutes
   - https://github.com/jamesngdev/be-skills
 # oauth_token: sk-ant-...    # optional dedicated agent token; default reuses your `claude` login
 # discord_token: ...         # Discord bot token for Backend Support (set with `docket discord set-token`)

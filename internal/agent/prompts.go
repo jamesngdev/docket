@@ -13,6 +13,10 @@ func RoleInstructions(role string) string {
 - Record all output through the docket CLI (skill: docket-cli).
 - Finish with ` + "`docket run done --summary \"...\"`" + `. Without it your run counts as failed.
 - Never edit files under .docket/ except the ones your task tells you to write.
+- "Repo notes" in your context files (from .docket/REPO.md) hold the build/test commands, layout and conventions.
+  Trust them instead of re-discovering. When you learn something non-obvious that would have saved you time
+  (a required env var, a flaky test, a hidden convention), record it in one line:
+  ` + "`docket note add --text \"...\"`" + `.
 `
 	switch role {
 	case RoleTechLead:
@@ -81,7 +85,7 @@ func Kickoff(role, task, ctxDir string, ticketID int64) string {
 	switch role {
 	case RoleTechLead:
 		steps := map[string]string{
-			TaskBootstrap: "1) Use skill generate-compose. 2) Use skill scan-docs on every document. 3) Use skill generate-questions.",
+			TaskBootstrap: "1) Use skill generate-compose. 2) Use skill write-repo-notes. 3) Use skill scan-docs on every document. 4) Use skill generate-questions.",
 			TaskFeatures:  "Use skills scan-docs (for context) and generate-features. Base features on the answered questions in PROJECT.md.",
 			TaskTickets:   "Use skill generate-tickets for every approved feature listed without tickets in PROJECT.md.",
 			TaskMerge:     "Auto-merge is on. Use skill merge-prs for every ticket in MERGE.md (same context directory): merge, send back, or flag each one.",
@@ -111,4 +115,34 @@ Finish with: docket review submit %d --result <approve|request_changes> --summar
 			ticketID, ctxDir, ctxDir, ticketID)
 	}
 	return ""
+}
+
+// ResumeKickoff is the first message of a run that continues the role's earlier
+// Claude session on the same ticket (review round, redo, conflicts, re-review).
+// The agent already knows the ticket and the code, so it only gets the delta.
+func ResumeKickoff(role, task, ctxDir string, ticketID int64) string {
+	const reuse = "You already explored this code earlier in this conversation: reuse that knowledge, re-read only what changed."
+	switch role {
+	case RoleDeveloper:
+		if task == TaskResolveConflicts {
+			return fmt.Sprintf(`New run for ticket #%d: its open PR now has MERGE CONFLICTS with the PR target branch.
+%s/TICKET.md was refreshed (see "Merge conflicts" and "Recently merged tickets"). %s
+Use skill resolve-conflicts. Only resolve the conflicts and keep the ticket's behaviour.
+Finish with: docket ticket status %d wait_review --pr <url> && docket run done --summary "<one line>"`,
+				ticketID, ctxDir, reuse, ticketID)
+		}
+		return fmt.Sprintf(`New run for ticket #%d on the same worktree, branch and PR.
+%s/TICKET.md was refreshed: address EVERY point of its "Review feedback" and/or "Change request" section. %s
+Push to the existing PR (skill open-pr reuses it) and comment how each point was addressed.
+Finish with: docket ticket status %d wait_review --pr <url> && docket run done --summary "<one line>"`,
+			ticketID, ctxDir, reuse, ticketID)
+	case RoleTester:
+		return fmt.Sprintf(`New run: the Developer pushed changes to ticket #%d after your earlier review.
+%s/TICKET.md was refreshed. %s
+Re-review with skill review-pr, focusing on whether every point you requested is fixed and nothing regressed
+(diff since your last review).
+Finish with: docket review submit %d --result <approve|request_changes> --summary-file <file> && docket run done --summary "<one line>"`,
+			ticketID, ctxDir, reuse, ticketID)
+	}
+	return Kickoff(role, task, ctxDir, ticketID)
 }

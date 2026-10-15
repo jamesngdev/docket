@@ -46,3 +46,58 @@ func TestMergeMarkdownListsOnlyReadyTickets(t *testing.T) {
 		t.Error("merge task must not be gated")
 	}
 }
+
+func TestFastMergeable(t *testing.T) {
+	s := store.DefaultSettings()
+	low := store.Ticket{GateSHA: "abc", RiskFlags: ""}
+	if !fastMergeable(s, low, "abc", "pass") {
+		t.Fatal("gate passed on head, no risks, CI green: must merge directly")
+	}
+	for name, c := range map[string]struct {
+		s      store.Settings
+		t      store.Ticket
+		head   string
+		checks string
+	}{
+		"risk flags":        {s, store.Ticket{GateSHA: "abc", RiskFlags: "migration: m.sql"}, "abc", "pass"},
+		"pushed after gate": {s, low, "def", "pass"},
+		"no gate":           {s, store.Ticket{}, "", "pass"},
+		"CI failed":         {s, low, "abc", "fail"},
+		"review all":        {store.Settings{MergeReview: store.MergeReviewAll}, low, "abc", "pass"},
+	} {
+		if fastMergeable(c.s, c.t, c.head, c.checks) {
+			t.Errorf("%s: must go to TechLead", name)
+		}
+	}
+}
+
+func TestMergeMarkdownShowsRiskFlags(t *testing.T) {
+	md := mergeMarkdown(store.Project{Settings: store.DefaultSettings()}, []store.Ticket{
+		{ID: 3, Title: "Drop column", Status: store.TWaitReview, PRURL: "u", ReviewState: store.RApprove, RiskFlags: "migration: m.sql"},
+	})
+	if !strings.Contains(md, "Risk flags (focus your review here): migration: m.sql") {
+		t.Errorf("risk flags missing:\n%s", md)
+	}
+}
+
+func TestResumable(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(dir + "/d.sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_ = db.CreateProject(store.Project{Name: "p", RepoPath: dir})
+	id, _ := db.AddTicket(store.Ticket{Title: "t"})
+	d := &Daemon{db: db}
+	if d.resumable(agent.RoleDeveloper, agent.TaskImplement, id) || d.resumable(agent.RoleTester, "review", id) {
+		t.Fatal("first runs start fresh")
+	}
+	if !d.resumable(agent.RoleDeveloper, agent.TaskResolveConflicts, id) {
+		t.Fatal("conflict fix continues the Developer session")
+	}
+	_ = db.UpdateTicketFields(id, map[string]any{"review_state": store.RRequestChanges, "review_summary": "fix x", "review_rounds": 1})
+	if !d.resumable(agent.RoleDeveloper, agent.TaskImplement, id) || !d.resumable(agent.RoleTester, "review", id) {
+		t.Fatal("a review round continues both sessions")
+	}
+}

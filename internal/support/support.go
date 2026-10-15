@@ -126,6 +126,9 @@ func prepare(p paths.Project, db *store.DB, proj store.Project) (wt, ctxDir stri
 	in := agent.TechleadInput{Project: proj, Task: "answer questions from teammates on Discord (read-only)",
 		DocsHead: proj.DocsCommit, PrevCommit: proj.PrevDocsCommit}
 	in.Docs, _ = db.Documents()
+	if notes, err := os.ReadFile(p.RepoNotes()); err == nil {
+		in.RepoNotes = string(notes)
+	}
 	in.Questions, _ = db.Questions()
 	in.Features, _ = db.Features()
 	in.Tickets, _ = db.Tickets()

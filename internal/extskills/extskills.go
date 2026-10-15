@@ -23,7 +23,7 @@ var DefaultRepos = []string{"https://github.com/jamesngdev/be-skills"}
 // RolesWithTeamSkills are the agent roles that receive team skills.
 var RolesWithTeamSkills = map[string]bool{"developer": true, "techlead": true}
 
-// Load pulls the configured team skill repos (fresh on every call).
+// Load pulls the configured team skill repos (at most every pullEvery per repo).
 func Load() ([]Skill, []error) {
 	repos := DefaultRepos
 	if c, err := config.Load(); err == nil {
@@ -79,16 +79,29 @@ func Sync(urls []string, cacheRoot string) ([]Skill, []error) {
 	return skills, errs
 }
 
+// pullEvery bounds how often a team skill repo is pulled: agents start in
+// bursts (parallel Developers, review rounds), and a few minutes of staleness
+// is fine for skills while a pull per spawn costs seconds each time.
+const pullEvery = 10 * time.Minute
+
 func pull(url, dir string) error {
+	stamp := filepath.Join(dir, ".git", "docket-pulled-at")
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		_, err := sh.RunTimeout(time.Minute, dir, "git", "pull", "--ff-only", "-q")
-		return err
+		if fi, err := os.Stat(stamp); err == nil && time.Since(fi.ModTime()) < pullEvery {
+			return nil
+		}
+		if _, err := sh.RunTimeout(time.Minute, dir, "git", "pull", "--ff-only", "-q"); err != nil {
+			return err
+		}
+		return os.WriteFile(stamp, nil, 0o644)
 	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return err
 	}
-	_, err := sh.RunTimeout(2*time.Minute, "", "git", "clone", "-q", "--depth", "1", url, dir)
-	return err
+	if _, err := sh.RunTimeout(2*time.Minute, "", "git", "clone", "-q", "--depth", "1", url, dir); err != nil {
+		return err
+	}
+	return os.WriteFile(stamp, nil, 0o644)
 }
 
 // Scan finds skill directories (containing SKILL.md) in <dir>/skills/* and <dir>/*.
@@ -171,14 +184,14 @@ func PromptSection(skills []Skill, role string) string {
 	}
 	var b strings.Builder
 	if role == "techlead" {
-		b.WriteString("\n\nTEAM SKILLS (pulled fresh for this run) encode the team's engineering standards. Read the SKILL.md of\n")
+		b.WriteString("\n\nTEAM SKILLS (kept up to date by docket) encode the team's engineering standards. Read the SKILL.md of\n")
 		b.WriteString("each one that relates to your task. When you create or update features/tickets:\n")
 		b.WriteString("- Fold their rules into requirements and acceptance criteria (e.g. security checks, docs/llms.txt updates).\n")
 		b.WriteString("- End every ticket's requirements with a line \"Team skills: <names>\" naming the skills its Developer must\n")
 		b.WriteString("  apply (or \"Team skills: none\").\n")
 		b.WriteString("- Do not run long audits unless your task needs their findings to write correct tickets.\n")
 	} else {
-		b.WriteString("\n\nTEAM SKILLS (pulled fresh for this run). Before opening/updating the PR, apply EVERY skill below whose\n")
+		b.WriteString("\n\nTEAM SKILLS (kept up to date by docket). Before opening/updating the PR, apply EVERY skill below whose\n")
 		b.WriteString("description matches your change (always those named in the ticket's \"Team skills\" line), following its\n")
 		b.WriteString("SKILL.md. In the PR body add a \"Team skills\" section listing each skill as applied (with the outcome)\n")
 		b.WriteString("or skipped (with a one-line reason).\n")

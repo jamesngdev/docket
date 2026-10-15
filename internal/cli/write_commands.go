@@ -157,7 +157,31 @@ func write(cmd, sub string, a args) error {
 		if a.pos[1] == store.TWaitReview && a.flags["pr"] == "" && t.PRURL == "" {
 			return fmt.Errorf("wait_review requires --pr <url>")
 		}
-		if err := db.UpdateTicketFields(id, fields); err != nil {
+		rid := os.Getenv("DOCKET_RUN")
+		if a.pos[1] == store.TWaitReview && strings.HasPrefix(rid, "developer-") {
+			pr := a.flags["pr"]
+			if pr == "" {
+				pr = t.PRURL
+			}
+			gated, err := waitReviewGate(db, p, t, rid, pr)
+			if err != nil {
+				return err
+			}
+			for k, v := range gated {
+				fields[k] = v
+			}
+		}
+		if rid != "" {
+			// The gate can take minutes: only write if this run still owns the ticket
+			// (the user may have stopped it, or a redo may have reset it meanwhile).
+			ok, err := db.UpdateTicketFieldsIfLocked(id, rid, fields)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("ticket #%d is no longer assigned to run %s; nothing recorded", id, rid)
+			}
+		} else if err := db.UpdateTicketFields(id, fields); err != nil {
 			return err
 		}
 		db.Log(actor, "ticket #%d → %s %s", id, a.pos[1], a.flags["pr"])
@@ -178,6 +202,10 @@ func write(cmd, sub string, a args) error {
 			return err
 		}
 		db.Log("tester", "ticket #%d review: %s", id, result)
+	case "note add":
+		if err := noteAdd(p, a, actor); err != nil {
+			return err
+		}
 	case "run done":
 		rid, err := runID()
 		if err != nil {
@@ -217,6 +245,14 @@ func ticketUpdate(db *store.DB, a args, actor string) error {
 			fields[f.col] = strings.TrimSpace(v)
 		}
 	}
+	if acc, ok := fields["acceptance"].(string); ok {
+		if err := validateAcceptance(acc); err != nil {
+			return err
+		}
+	}
+	if err := ticketExtras(a, fields); err != nil {
+		return err
+	}
 	if raw, ok := a.flags["depends"]; ok {
 		deps := store.ParseIDs(raw)
 		for _, dep := range deps {
@@ -230,7 +266,7 @@ func ticketUpdate(db *store.DB, a args, actor string) error {
 		fields["depends_on"] = store.JoinIDs(deps)
 	}
 	if len(fields) == 0 {
-		return fmt.Errorf("nothing to update: pass --title, --requirements, --acceptance or --depends")
+		return fmt.Errorf("nothing to update: pass --title, --requirements, --acceptance, --depends, --files or --model")
 	}
 	if err := db.UpdateTicketFields(id, fields); err != nil {
 		return err
@@ -256,13 +292,26 @@ func ticketAdd(db *store.DB, a args) error {
 	if err != nil {
 		return err
 	}
+	if err := validateAcceptance(acc); err != nil {
+		return err
+	}
+	extras := map[string]any{}
+	if err := ticketExtras(a, extras); err != nil {
+		return err
+	}
+	files, _ := extras["planned_files"].(string)
+	if files == "" {
+		return fmt.Errorf("--files is required: comma-separated paths/globs the ticket will change (e.g. internal/orders/,migrations/*.sql)")
+	}
+	model, _ := extras["model"].(string)
 	deps := store.ParseIDs(a.flags["depends"])
 	for _, d := range deps {
 		if _, err := db.Ticket(d); err != nil {
 			return fmt.Errorf("dependency #%d does not exist", d)
 		}
 	}
-	id, err := db.AddTicket(store.Ticket{FeatureID: fid, Title: title, Requirements: req, Acceptance: acc, DependsOn: deps})
+	id, err := db.AddTicket(store.Ticket{FeatureID: fid, Title: title, Requirements: req, Acceptance: acc, DependsOn: deps,
+		PlannedFiles: files, Model: model})
 	if err != nil {
 		return err
 	}

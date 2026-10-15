@@ -104,3 +104,48 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatalf("run callback not stored: %+v", running)
 	}
 }
+
+func TestRunSessionsAndMergeCheck(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "d.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	_ = d.InsertRun(Run{ID: "developer-1", Role: "developer", TicketID: 5, Session: "s", ClaudeSession: "aaa"})
+	_ = d.InsertRun(Run{ID: "developer-2", Role: "developer", TicketID: 5, Session: "s", ClaudeSession: "bbb"})
+	_ = d.InsertRun(Run{ID: "tester-1", Role: "tester", TicketID: 5, Session: "s", ClaudeSession: "ccc"})
+	_ = d.MarkCallback("developer-2", "PR")
+	_ = d.FinishRun("developer-2", RunDone)
+	if got := d.LastClaudeSession("developer", 5); got != "bbb" {
+		t.Fatalf("latest clean developer session: got %q", got)
+	}
+	_ = d.InsertRun(Run{ID: "developer-3", Role: "developer", TicketID: 5, Session: "s", ClaudeSession: "ddd"})
+	_ = d.FinishRun("developer-3", RunFailed)
+	if got := d.LastClaudeSession("developer", 5); got != "" {
+		t.Fatalf("a failed latest run must start fresh, got %q", got)
+	}
+	if got := d.LastClaudeSession("developer", 6); got != "" {
+		t.Fatalf("other ticket: got %q", got)
+	}
+	if ok, _ := d.UpdateTicketFieldsIfLocked(1, "developer-9", map[string]any{"status": TWaitReview}); ok {
+		t.Fatal("no ticket is locked by developer-9")
+	}
+	if r, _ := d.RunByID("tester-1"); r.ClaudeSession != "ccc" {
+		t.Fatalf("session not stored: %+v", r)
+	}
+	_ = d.CreateProject(Project{Name: "p", RepoPath: "/r"})
+	id, _ := d.AddTicket(Ticket{Title: "t", PlannedFiles: "a/", Model: "opus"})
+	if err := d.UpdateTicketFields(id, map[string]any{"merge_checked_at": 123, "risk_flags": "x", "gate_sha": "s"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = d.UpdateTicketFields(id, map[string]any{"locked_by": "developer-1"})
+	if ok, err := d.UpdateTicketFieldsIfLocked(id, "developer-2", map[string]any{"status": TWaitReview}); ok || err != nil {
+		t.Fatalf("a run that lost the lock must not write: %v %v", ok, err)
+	}
+	if ok, _ := d.UpdateTicketFieldsIfLocked(id, "developer-1", map[string]any{"status": TWaitReview}); !ok {
+		t.Fatal("the owning run must write")
+	}
+	if tk, _ := d.Ticket(id); tk.MergeCheckedAt != 123 || tk.RiskFlags != "x" || tk.GateSHA != "s" || tk.PlannedFiles != "a/" || tk.Model != "opus" {
+		t.Fatalf("ticket fields not stored: %+v", tk)
+	}
+}

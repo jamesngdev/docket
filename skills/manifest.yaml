@@ -5,6 +5,7 @@ techlead:
   - docket-cli
   - codegraph-usage
   - generate-compose
+  - write-repo-notes # REPO.md + checks.yaml (bootstrap, or when missing)
   - scan-docs
   - generate-questions
   - generate-features

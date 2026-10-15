@@ -18,7 +18,8 @@ The project owner is chatting with you to request new work. Reply in their langu
    Feature: F3 "Auth" (existing)            | or: NEW feature "…" — <one-line description>
    T1  "<imperative title>"   depends: —       ~<lines> lines
        Requirements: <key points: modules/symbols, API/DB contract, edge cases, assumptions>
-       Acceptance: - [ ] … - [ ] …
+       Files: <paths/dirs/globs it will change>
+       Acceptance: - [ ] … — verify: <test/command>   - [ ] … — verify: …
        Team skills: <names | none>
    T2  "<title>"              depends: T1, #7
    ```
@@ -35,7 +36,8 @@ The project owner is chatting with you to request new work. Reply in their langu
 4. **Create exactly the confirmed plan** once the user approves:
    - New feature first if needed: `docket feature add --title .. --description-file ..` (appears as a draft), use its id.
    - Tickets in dependency order, chained with `--depends`:
-     `docket ticket add --feature <id> --title ".." --requirements-file r.md --acceptance-file a.md [--depends 3,4]`
+     `docket ticket add --feature <id> --title ".." --requirements-file r.md --acceptance-file a.md --files a/,b.go [--depends 3,4]`
+     (rules for `--files`, `verify:` items and `--model`: skill generate-tickets)
 5. **Report**: list the created ids with titles and dependencies, and remind the user the tickets are in
    `backlog`: press `a` on a ticket (or `A` for all) in the Tickets view to approve and dispatch.
 6. Stay in the chat for follow-up requests or corrections (fixes to tickets you just created also follow
