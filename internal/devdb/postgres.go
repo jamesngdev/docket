@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -13,14 +14,39 @@ import (
 // postgres runs every query as a single prepared statement inside a READ ONLY
 // transaction that is rolled back afterwards, so writes, DDL and multi-statement
 // tricks fail inside the database itself.
-type postgres struct{ conn *pgx.Conn }
+type postgres struct {
+	conn   *pgx.Conn
+	schema string // Prisma's ?schema=, applied per transaction as search_path
+}
+
+// prismaParams are URL parameters Prisma understands but Postgres/PgBouncer
+// reject as startup parameters ("unsupported startup parameter: schema").
+var prismaParams = []string{"schema", "pgbouncer", "connection_limit", "pool_timeout", "socket_timeout",
+	"statement_cache_size", "sslaccept", "sslidentity", "sslpassword"}
 
 func openPostgres(ctx context.Context, raw string) (Engine, error) {
-	conn, err := pgx.Connect(ctx, raw)
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, errors.New("not a valid connection URL")
+	}
+	q := u.Query()
+	schema := q.Get("schema")
+	for _, k := range prismaParams {
+		q.Del(k)
+	}
+	u.RawQuery = q.Encode()
+	cfg, err := pgx.ParseConfig(u.String())
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres URL: %w", err)
+	}
+	// Unnamed statements (extended protocol, no cache): still one statement per
+	// query, and safe behind PgBouncer in transaction mode.
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeExec
+	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	return &postgres{conn: conn}, nil
+	return &postgres{conn: conn, schema: schema}, nil
 }
 
 func (p *postgres) Close() { _ = p.conn.Close(context.Background()) }
@@ -72,6 +98,11 @@ func (p *postgres) rows(ctx context.Context, query string, limit int, args ...an
 	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", queryTimeout.Milliseconds())); err != nil {
 		return nil, false, err
 	}
+	if p.schema != "" { // SET LOCAL, not a startup parameter: PgBouncer rejects search_path there
+		if _, err := tx.Exec(ctx, "SET LOCAL search_path = "+pgx.Identifier{p.schema}.Sanitize()+", public"); err != nil {
+			return nil, false, err
+		}
+	}
 	wrapped := fmt.Sprintf("SELECT row_to_json(q)::text FROM (\n%s\n) q LIMIT %d", query, limit+1)
 	rs, err := tx.Query(ctx, wrapped, args...)
 	if err != nil {
@@ -106,7 +137,7 @@ func (p *postgres) table(ctx context.Context, name string) (string, error) {
 	var oid uint32
 	err := p.conn.QueryRow(ctx, `SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
 		WHERE c.relkind IN ('r','p','v','m','f') AND (c.relname = $1 OR lower(c.relname) = lower($1)) AND ($2 = '' OR n.nspname = $2)
-		ORDER BY c.relname = $1 DESC, n.nspname = 'public' DESC LIMIT 1`, tbl, sch).Scan(&oid)
+		ORDER BY c.relname = $1 DESC, n.nspname = $3 DESC, n.nspname = 'public' DESC LIMIT 1`, tbl, sch, p.schema).Scan(&oid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("table %q not found (call db_schema without arguments to list tables)", name)
 	}
