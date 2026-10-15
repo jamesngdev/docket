@@ -83,14 +83,18 @@ func Ask(ctx context.Context, p paths.Project, db *store.DB, r Request) (Answer,
 	if err != nil {
 		return Answer{}, fmt.Errorf("build claude home: %w", err)
 	}
+	extra, err := dbArgs(p, home, proj.Settings.SupportDB)
+	if err != nil {
+		return Answer{}, fmt.Errorf("dev db mcp config: %w", err)
+	}
 	prompt := followUp(r)
 	if r.Session == "" {
 		prompt = firstPrompt(r, proj, p, ctxDir)
 	}
-	a, err := run(ctx, p, home, wt, ctxDir, model, r.Session, prompt)
+	a, err := run(ctx, p, home, wt, ctxDir, model, r.Session, prompt, extra)
 	if errors.Is(err, errSessionMissing) {
 		// The session is gone (e.g. claude home wiped): start over with full context.
-		a, err = run(ctx, p, home, wt, ctxDir, model, "", firstPrompt(r, proj, p, ctxDir))
+		a, err = run(ctx, p, home, wt, ctxDir, model, "", firstPrompt(r, proj, p, ctxDir), extra)
 	}
 	return a, err
 }
@@ -148,8 +152,8 @@ func firstPrompt(r Request, proj store.Project, p paths.Project, ctxDir string) 
 Context directory: %s (PROJECT.md: questions+answers, features, documents; TICKETS.md: full tickets; GIT_LOG.md: recent commits; 3TH_DOCUMENT.md)
 Docs directory: %s (phase %s)
 Source code: your working directory, base branch %s.
-Answer as Backend Support (read-only). Use skill answer-discord.`,
-		r.Author, r.Question, ctxDir, p.Docs(), proj.ActivePhase, proj.Settings.BaseBranch)
+%sAnswer as Backend Support (read-only). Use skill answer-discord.`,
+		r.Author, r.Question, ctxDir, p.Docs(), proj.ActivePhase, proj.Settings.BaseBranch, dbLine(proj.Settings.SupportDB))
 }
 
 func followUp(r Request) string {
@@ -163,12 +167,13 @@ type result struct {
 	IsError   bool   `json:"is_error"`
 }
 
-func run(ctx context.Context, p paths.Project, home, wt, ctxDir, model, session, prompt string) (Answer, error) {
+func run(ctx context.Context, p paths.Project, home, wt, ctxDir, model, session, prompt string, extra []string) (Answer, error) {
 	ctx, cancel := context.WithTimeout(ctx, answerTimeout)
 	defer cancel()
 	args := []string{"-p", "--setting-sources", "user", "--strict-mcp-config", "--model", model,
 		"--tools", tools,
 		"--add-dir", p.Docs(), "--add-dir", ctxDir, "--output-format", "json"}
+	args = append(args, extra...)
 	if session != "" {
 		args = append(args, "--resume", session)
 	}

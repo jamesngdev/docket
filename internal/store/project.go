@@ -15,6 +15,7 @@ type Settings struct {
 	Models            map[string]string `json:"models"`
 	DiscordChannel    string            `json:"discord_channel,omitempty"` // Backend Support answers @mentions here
 	AutoMerge         bool              `json:"auto_merge,omitempty"`      // TechLead reviews and squash-merges approved PRs
+	SupportDB         string            `json:"support_db,omitempty"`      // dev DB URL Backend Support may query read-only
 }
 
 func DefaultSettings() Settings {

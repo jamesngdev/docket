@@ -21,6 +21,7 @@ docket auth set-token <token>  optional: dedicated agent token (from 'claude set
 docket auth clear-token        go back to reusing your claude login
 docket discord set-token <bot-token> | clear-token   Discord bot for Backend Support (all projects)
 docket discord channel <channel-id>|off | status   answer @mentions in this project's channel
+docket discord db [<postgres://…|mongodb://…>] | db off   dev DB Backend Support may query read-only (this project)
 docket phase list | phase set <docs-branch>   list / switch the active phase (docs branch)
 docket show questions|features|tickets|ticket <id>
 docket question add --text T [--source S] | question answer <id> --text T
@@ -43,7 +44,7 @@ var Version = "dev"
 // commands are the subcommands Run understands; anything else may be a path.
 var commands = map[string]bool{"help": true, "--help": true, "daemon": true, "auth": true, "show": true,
 	"discord": true, "automerge": true, "phase": true, "question": true, "feature": true, "ticket": true, "review": true, "run": true,
-	"version": true, "--version": true}
+	"version": true, "--version": true, "support-db-mcp": true}
 
 // IsCommand reports whether name is a docket subcommand (not a project path).
 func IsCommand(name string) bool { return commands[name] }
@@ -82,6 +83,8 @@ func Run(argv []string) error {
 		return show(a, sub)
 	case "discord":
 		return discordCmd(a, sub)
+	case "support-db-mcp": // internal: stdio MCP server spawned by Backend Support's claude
+		return supportDBMCP(a)
 	case "automerge":
 		return autoMergeCmd(a, sub)
 	case "phase":

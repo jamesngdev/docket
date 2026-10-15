@@ -27,10 +27,11 @@ make test                            # vet + tests
 | `skills/` | Embedded skill bundle + `manifest.yaml` (role → skills). The only skills agents ever get |
 | `internal/agent` | Isolated `CLAUDE_CONFIG_DIR` per role, context files (PROJECT.md, TICKET.md, 3TH_DOCUMENT.md), kickoff prompts, tmux launch |
 | `internal/discord` | Discord Connect: per-daemon gateway connection, @mention → thread, follow-ups resume the thread's session, chunked replies |
-| `internal/support` | Read-only Backend Support: headless `claude -p` (+`--resume`), no shell (Read/Grep/Glob only) in a detached base-branch worktree; project state + git log pre-rendered into its context dir |
+| `internal/support` | Read-only Backend Support: headless `claude -p` (+`--resume`), no shell (Read/Grep/Glob only) in a detached base-branch worktree; project state + git log pre-rendered into its context dir; dev DB tools via `--mcp-config` when `support_db` is set |
+| `internal/devdb` | Read-only dev database for Backend Support: stdio MCP server (`docket support-db-mcp`) with `db_schema` + `sql_query` (Postgres, READ ONLY tx) or `mongo_find/count/aggregate` (MongoDB, no `$out/$merge`) |
 | `internal/daemon` | Loop every 5s + on kick: reap runs, review loop, start tester, dispatch developers, poll PRs (60s); TechLead tasks; docs rescan; compose up |
 | `internal/ipc` | Newline-JSON over unix socket (ping, kick, techlead, rescan, stop, restart, compose, shutdown) |
-| `internal/cli` | Agent-facing commands (`question/feature/ticket/review/run`), `show`, `daemon`, `auth` |
+| `internal/cli` | Agent-facing commands (`question/feature/ticket/review/run`), `show`, `daemon`, `auth`, `discord` (token, channel, `db`) |
 | `internal/project` | New project: clone, `.docket/` layout, git info/exclude, docs clone, DB, register |
 | `internal/tui` | Picker, new-project form, workspace (dashboard stepper, questions, features, tickets, agents, docs), textarea editor, `:` commands |
 
